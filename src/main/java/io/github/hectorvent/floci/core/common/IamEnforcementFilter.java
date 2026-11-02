@@ -188,6 +188,9 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
             "AssumeRoleWithSAML",
             "AssumeRoleWithWebIdentity");
 
+    /** The request property holding the account {@link #resourceTagAccount} gives, for each check the request makes. */
+    private static final String RESOURCE_TAG_ACCOUNT_PROPERTY = "floci.iam.resourceTagAccount";
+
     /**
      * Implicit identity policy for the account-root principal: full access, bounded only by SCPs.
      * The account root is not a registered IAM identity, so it has no stored identity policy.
@@ -215,6 +218,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
     private final Clock clock;
     private final ResourceInfo resourceInfo;
     private final Instance<S3Service> s3ServiceProvider;
+    private final ResourceTags resourceTags;
 
     @Inject
     public IamEnforcementFilter(EmulatorConfig config,
@@ -235,7 +239,8 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
                                 Instance<PassedRoleLookup> passedRoleLookups,
                                 Clock clock,
                                 @Context ResourceInfo resourceInfo,
-                                Instance<S3Service> s3ServiceProvider) {
+                                Instance<S3Service> s3ServiceProvider,
+                                ResourceTags resourceTags) {
         this.config = config;
         this.accountResolver = accountResolver;
         this.iamService = iamService;
@@ -255,6 +260,34 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         this.clock = clock;
         this.resourceInfo = resourceInfo;
         this.s3ServiceProvider = s3ServiceProvider;
+        this.resourceTags = resourceTags;
+    }
+
+    /** Package-private constructor for callers predating resourceTags. */
+    IamEnforcementFilter(EmulatorConfig config,
+                         AccountResolver accountResolver,
+                         IamService iamService,
+                         IamPolicyEvaluator evaluator,
+                         IamActionRegistry actionRegistry,
+                         AwsQueryServiceResolver queryServiceResolver,
+                         ResourceArnBuilder arnBuilder,
+                         RequestContext requestContext,
+                         IamConditionContextResolver conditionContextResolver,
+                         CloudTrailService cloudTrailService,
+                         CurrentVertxRequest currentVertxRequest,
+                         ResolvedServiceCatalog catalog,
+                         Instance<ScpProvider> scpProvider,
+                         SessionAccountLookup sessionAccountLookup,
+                         Instance<ResourcePolicyProvider> resourcePolicyProviders,
+                         Instance<PassedRoleLookup> passedRoleLookups,
+                         Clock clock,
+                         ResourceInfo resourceInfo,
+                         Instance<S3Service> s3ServiceProvider) {
+        this(config, accountResolver, iamService, evaluator, actionRegistry,
+                queryServiceResolver, arnBuilder, requestContext,
+                conditionContextResolver, cloudTrailService, currentVertxRequest, catalog,
+                scpProvider, sessionAccountLookup, resourcePolicyProviders, passedRoleLookups, clock, resourceInfo,
+                s3ServiceProvider, null);
     }
 
     /** Package-private constructor for callers predating s3ServiceProvider. */
@@ -279,7 +312,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         this(config, accountResolver, iamService, evaluator, actionRegistry,
                 queryServiceResolver, arnBuilder, requestContext,
                 conditionContextResolver, cloudTrailService, currentVertxRequest, catalog,
-                scpProvider, sessionAccountLookup, resourcePolicyProviders, passedRoleLookups, clock, resourceInfo, null);
+                scpProvider, sessionAccountLookup, resourcePolicyProviders, passedRoleLookups, clock, resourceInfo, null, null);
     }
 
     /** Package-private constructor for callers predating Query dispatch-aware enforcement. */
@@ -300,7 +333,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         this(config, accountResolver, iamService, evaluator, actionRegistry,
                 new AwsQueryServiceResolver(catalog), arnBuilder, requestContext,
                 conditionContextResolver, cloudTrailService, currentVertxRequest, catalog,
-                scpProvider, sessionAccountLookup, resourcePolicyProviders, null, Clock.systemUTC(), null, null);
+                scpProvider, sessionAccountLookup, resourcePolicyProviders, null, Clock.systemUTC(), null, null, null);
     }
 
     /** Package-private constructor for callers predating resourcePolicyProviders. */
@@ -320,7 +353,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         this(config, accountResolver, iamService, evaluator, actionRegistry,
                 new AwsQueryServiceResolver(catalog), arnBuilder, requestContext,
                 conditionContextResolver, cloudTrailService, currentVertxRequest, catalog,
-                scpProvider, sessionAccountLookup, null, null, Clock.systemUTC(), null, null);
+                scpProvider, sessionAccountLookup, null, null, Clock.systemUTC(), null, null, null);
     }
 
     /** Package-private constructor for testing with S3Service. */
@@ -342,7 +375,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         this(config, accountResolver, iamService, evaluator, actionRegistry,
                 new AwsQueryServiceResolver(catalog), arnBuilder, requestContext,
                 conditionContextResolver, cloudTrailService, currentVertxRequest, catalog,
-                scpProvider, sessionAccountLookup, resourcePolicyProviders, null, Clock.systemUTC(), null, s3ServiceProvider);
+                scpProvider, sessionAccountLookup, resourcePolicyProviders, null, Clock.systemUTC(), null, s3ServiceProvider, null);
     }
 
     @Override
@@ -484,6 +517,8 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
 
         List<String> resources = resolveResourceArns(credentialScope,
                 targetResources(credentialScope, action, resolvedAuthorization.operation(), ctx, region, accountId));
+        ctx.setProperty(RESOURCE_TAG_ACCOUNT_PROPERTY,
+                resourceTagAccount(credentialScope, resolvedAuthorization.operation(), ctx, accountId));
 
         Optional<PresignedScope> presignedScope = iamService.presignedScope(akid);
         if (presignedScope.isPresent()) {
@@ -1247,6 +1282,52 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
     }
 
     /**
+     * Each context with {@code aws:ResourceTag/<key>} for the tags on {@code resource}, where {@code action} takes the
+     * key and the service's own resolver left it out.
+     */
+    private List<Map<String, List<String>>> withResourceTags(List<Map<String, List<String>>> contexts, String action,
+                                                             String resource, String region,
+                                                             ContainerRequestContext ctx) {
+        if (resourceTags == null || contexts.stream().allMatch(ResourceTags::hasResourceTags)) {
+            return contexts;
+        }
+        Map<String, List<String>> tags = resourceTags.conditionKeys(action, resource,
+                ctx.getProperty(RESOURCE_TAG_ACCOUNT_PROPERTY) instanceof String account ? account : null, region);
+        if (tags.isEmpty()) {
+            return contexts;
+        }
+        List<Map<String, List<String>>> tagged = new ArrayList<>();
+        for (Map<String, List<String>> context : contexts) {
+            if (ResourceTags.hasResourceTags(context)) {
+                tagged.add(context);
+                continue;
+            }
+            Map<String, List<String>> withTags = context == null ? new HashMap<>() : new HashMap<>(context);
+            withTags.putAll(tags);
+            tagged.add(withTags);
+        }
+        return tagged;
+    }
+
+    /**
+     * The account whose copy of the resource the request acts on, where the service does not take it from the ARN
+     * the request is checked against; null for the ARN's own. DynamoDB runs a call naming a table ARN against the
+     * caller's table of that name, and SQS a call naming a queue URL against the queue of the account in the URL,
+     * as its message operations do.
+     */
+    private String resourceTagAccount(String credentialScope, String operation, ContainerRequestContext ctx,
+                                      String accountId) {
+        if (credentialScope == null) {
+            return null;
+        }
+        return switch (credentialScope) {
+            case "dynamodb" -> accountId;
+            case "sqs" -> arnBuilder.sqsQueueUrlAccount(operation, ctx).orElse(null);
+            default -> null;
+        };
+    }
+
+    /**
      * Checks {@code action}, which may be one the operation needs besides its own. A denial names
      * {@code action}, the permission that is missing, while the CloudTrail event records
      * {@code operationAction}, the operation that was refused.
@@ -1272,10 +1353,12 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
 
             List<Map<String, List<String>>> batchContexts = "dynamodb".equals(credentialScope)
                     ? conditionContextResolver.dynamoDbBatchConditionContexts(action, ctx, resource) : null;
-            List<Map<String, List<String>>> resourceContexts = targetContexts;
+            List<Map<String, List<String>>> taggedContexts =
+                    withResourceTags(targetContexts, action, resource, region, ctx);
+            List<Map<String, List<String>>> resourceContexts = taggedContexts;
             if (batchContexts != null && !batchContexts.isEmpty()) {
                 resourceContexts = new ArrayList<>();
-                for (Map<String, List<String>> targetContext : targetContexts) {
+                for (Map<String, List<String>> targetContext : taggedContexts) {
                     for (Map<String, List<String>> batchContext : batchContexts) {
                         Map<String, List<String>> entryContext = targetContext == null
                                 ? new HashMap<>() : new HashMap<>(targetContext);

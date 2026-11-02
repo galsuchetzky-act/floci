@@ -2052,7 +2052,9 @@ public class SqsService implements Resettable, ResourceProvider {
                 .orElseThrow(() -> new AwsException("AWS.SimpleQueueService.NonExistentQueue",
                         "The specified queue does not exist.", 400));
         if (tags != null) {
-            queue.getTags().putAll(tags);
+            Map<String, String> updated = new HashMap<>(queue.getTags());
+            updated.putAll(tags);
+            queue.setTags(updated);
         }
         queueStore.put(storageKey, queue);
         LOG.infov("Tagged queue: {0}", queueUrl);
@@ -2064,9 +2066,9 @@ public class SqsService implements Resettable, ResourceProvider {
                 .orElseThrow(() -> new AwsException("AWS.SimpleQueueService.NonExistentQueue",
                         "The specified queue does not exist.", 400));
         if (tagKeys != null) {
-            for (String key : tagKeys) {
-                queue.getTags().remove(key);
-            }
+            Map<String, String> updated = new HashMap<>(queue.getTags());
+            tagKeys.forEach(updated::remove);
+            queue.setTags(updated);
         }
         queueStore.put(storageKey, queue);
         LOG.infov("Untagged queue: {0}", queueUrl);
@@ -2380,6 +2382,17 @@ public class SqsService implements Resettable, ResourceProvider {
             }
         }
         return queueStore.get(storageKey);
+    }
+
+    /**
+     * The account in a queue URL's path, the one a call naming the URL reads its queue in, as the message
+     * operations do; empty for a bare queue name, which names the caller's own queue, or a path without one.
+     */
+    public static Optional<String> queueUrlAccount(String queueUrl) {
+        if (queueUrl == null || !queueUrl.contains("://")) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(accountFromQueueUrl(queueUrl));
     }
 
     private static String accountFromQueueUrl(String queueUrl) {

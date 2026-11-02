@@ -2173,7 +2173,9 @@ public class KmsService implements ResourceProvider {
         requireCustomerManaged(key, "kms:TagResource");
         requireNotPendingDeletion(key);
         ReservedTags.rejectReservedTagsOnUpdate(tags);
-        key.getTags().putAll(tags);
+        Map<String, String> updated = new HashMap<>(key.getTags());
+        updated.putAll(tags);
+        key.setTags(updated);
         keyStore.put(region + "::" + key.getKeyId(), key);
     }
 
@@ -2181,7 +2183,9 @@ public class KmsService implements ResourceProvider {
         KmsKey key = resolveKey(keyId, region);
         requireCustomerManaged(key, "kms:UntagResource");
         requireNotPendingDeletion(key);
-        tagKeys.forEach(key.getTags()::remove);
+        Map<String, String> updated = new HashMap<>(key.getTags());
+        tagKeys.forEach(updated::remove);
+        key.setTags(updated);
         keyStore.put(region + "::" + key.getKeyId(), key);
     }
 

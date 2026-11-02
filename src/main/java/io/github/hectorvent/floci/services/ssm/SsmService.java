@@ -1058,10 +1058,9 @@ public class SsmService implements ResourceProvider {
                 .orElseThrow(() -> new AwsException("InvalidResourceId",
                         "Resource " + resourceId + " not found.", 400));
 
-        if (param.getTags() == null) {
-            param.setTags(new HashMap<>());
-        }
-        param.getTags().putAll(tags);
+        Map<String, String> updated = param.getTags() == null ? new HashMap<>() : new HashMap<>(param.getTags());
+        updated.putAll(tags);
+        param.setTags(updated);
         parameterStore.put(storageKey, param);
         LOG.debugv("Added tags to parameter: {0}", resourceId);
     }
@@ -1107,9 +1106,9 @@ public class SsmService implements ResourceProvider {
                         "Resource " + resourceId + " not found.", 400));
 
         if (param.getTags() != null) {
-            for (String key : tagKeys) {
-                param.getTags().remove(key);
-            }
+            Map<String, String> updated = new HashMap<>(param.getTags());
+            tagKeys.forEach(updated::remove);
+            param.setTags(updated);
             parameterStore.put(storageKey, param);
         }
         LOG.debugv("Removed tags from parameter: {0}", resourceId);

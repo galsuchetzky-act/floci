@@ -21,6 +21,7 @@ import io.github.hectorvent.floci.services.lambda.durable.DurableTokens;
 import io.github.hectorvent.floci.services.lambdamicrovms.LambdaMicrovmsService;
 import io.github.hectorvent.floci.services.s3.S3ControlArnUtils;
 import io.github.hectorvent.floci.services.secretsmanager.SecretsManagerService;
+import io.github.hectorvent.floci.services.sqs.SqsService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
@@ -54,6 +55,10 @@ import java.util.regex.Pattern;
 public class ResourceArnBuilder {
 
     private static final Pattern ACCESS_POLICY_ARN = Pattern.compile(EksController.ACCESS_POLICY_ARN);
+
+    /** The SQS operations that name their queue by another member than {@code QueueUrl}, or name none. */
+    private static final Set<String> SQS_OPERATIONS_WITHOUT_QUEUE_URL = Set.of("sqs:CreateQueue", "sqs:GetQueueUrl",
+            "sqs:ListQueues", "sqs:StartMessageMoveTask", "sqs:ListMessageMoveTasks", "sqs:CancelMessageMoveTask");
 
     /** The only scheme IAM accepts on an OIDC provider URL, and the part its ARN drops. */
     private static final String OIDC_URL_SCHEME = "https://";
@@ -195,8 +200,8 @@ public class ResourceArnBuilder {
         return switch (credentialScope) {
             case "s3"             -> buildS3Resources(operation, path, region);
             case "lambda"         -> List.of(buildLambdaArn(path, ctx, region, accountId));
-            case "sqs"            -> List.of(buildSqsArn(ctx, region, accountId));
-            case "sns"            -> List.of(buildSnsArn(ctx, region, accountId));
+            case "sqs"            -> List.of(buildSqsArn(operation, ctx, region, accountId));
+            case "sns"            -> List.of(buildSnsArn(operation, ctx, region, accountId));
             case "dynamodb"       -> buildDynamoDbArns(ctx, region, accountId);
             case "kinesis"        -> List.of(buildKinesisArn(ctx, region, accountId));
             case "ssm"            -> List.of(buildSsmArn(ctx, region, accountId));
@@ -1520,7 +1525,30 @@ public class ResourceArnBuilder {
     }
 
     // ── SQS ─────────────────────────────────────────────────────────────────────
-    private String buildSqsArn(ContainerRequestContext ctx, String region, String accountId) {
+    /**
+     * The queue {@code operation} acts on: the one {@code CreateQueue} and {@code GetQueueUrl} name by
+     * {@code QueueName}, the source queue a message move task names by {@code SourceArn}, and the queue of the
+     * {@code QueueUrl} for the rest, so another member cannot stand in for it.
+     */
+    private String buildSqsArn(String operation, ContainerRequestContext ctx, String region, String accountId) {
+        String wildcard = AwsArnUtils.Arn.of("sqs", region, accountId, "*").toString();
+        if (operation != null) {
+            switch (operation) {
+                case "sqs:CreateQueue", "sqs:GetQueueUrl" -> {
+                    String queueName = requestMember(ctx, "QueueName");
+                    return queueName == null ? wildcard : AwsArnUtils.Arn.of("sqs", region, accountId, queueName).toString();
+                }
+                case "sqs:StartMessageMoveTask", "sqs:ListMessageMoveTasks" -> {
+                    String sourceArn = requestMember(ctx, "SourceArn");
+                    return AwsArnUtils.isArnFor(sourceArn, "sqs") ? sourceArn : wildcard;
+                }
+                default -> {
+                    String queueUrl = requestMember(ctx, "QueueUrl");
+                    return queueUrl == null ? wildcard : AwsArnUtils.Arn.of("sqs", region, accountId,
+                            queueUrl.substring(queueUrl.lastIndexOf('/') + 1)).toString();
+                }
+            }
+        }
         String queueUrl = firstFormParam(ctx, "QueueUrl");
         if (queueUrl == null) {
             JsonNode json = readJsonBody(ctx);
@@ -1539,21 +1567,80 @@ public class ResourceArnBuilder {
             String queueName = queueUrl.substring(queueUrl.lastIndexOf('/') + 1);
             return AwsArnUtils.Arn.of("sqs", region, accountId, queueName).toString();
         }
-        return AwsArnUtils.Arn.of("sqs", region, accountId, "*").toString();
+        return wildcard;
+    }
+
+    /**
+     * The account of the queue a request names by its {@code QueueUrl}, which SQS reads the queue in, as
+     * {@link SqsService#queueUrlAccount(String)} gives it; empty for an operation that names its queue otherwise, or a
+     * URL that names no account.
+     */
+    public Optional<String> sqsQueueUrlAccount(String operation, ContainerRequestContext ctx) {
+        if (operation == null || SQS_OPERATIONS_WITHOUT_QUEUE_URL.contains(operation)) {
+            return Optional.empty();
+        }
+        return SqsService.queueUrlAccount(requestMember(ctx, "QueueUrl"));
     }
 
     // ── SNS ─────────────────────────────────────────────────────────────────────
-    private String buildSnsArn(ContainerRequestContext ctx, String region, String accountId) {
-        String topicArn = firstFormParam(ctx, "TopicArn");
-        if (topicArn == null) {
+    /**
+     * The topic {@code operation} acts on: the one the tagging and data protection operations name by
+     * {@code ResourceArn}, a subscription's topic for the operations naming a {@code SubscriptionArn}, the topic
+     * {@code CreateTopic} names, and the {@code TopicArn} for the rest. {@code Publish} sends to a
+     * {@code PhoneNumber} when it carries one, which is no topic, and otherwise to the {@code TopicArn} or the
+     * {@code TargetArn}, as {@code SnsService.publish} does; {@code PublishBatch} reads only the {@code TopicArn}.
+     */
+    private String buildSnsArn(String operation, ContainerRequestContext ctx, String region, String accountId) {
+        String wildcard = AwsArnUtils.Arn.of("sns", region, accountId, "*").toString();
+        String target;
+        if (operation == null) {
+            target = requestMember(ctx, "TopicArn");
+        } else {
+            target = switch (operation) {
+                case "sns:TagResource", "sns:UntagResource", "sns:ListTagsForResource",
+                        "sns:GetDataProtectionPolicy", "sns:PutDataProtectionPolicy" -> requestMember(ctx, "ResourceArn");
+                case "sns:GetSubscriptionAttributes", "sns:SetSubscriptionAttributes", "sns:Unsubscribe" ->
+                        subscriptionTopic(requestMember(ctx, "SubscriptionArn"));
+                case "sns:CreateTopic" -> {
+                    String name = requestMember(ctx, "Name");
+                    yield name == null ? null : AwsArnUtils.Arn.of("sns", region, accountId, name).toString();
+                }
+                case "sns:Publish" -> {
+                    if (requestMember(ctx, "PhoneNumber") != null) {
+                        yield null;
+                    }
+                    String topicArn = requestMember(ctx, "TopicArn");
+                    yield topicArn != null ? topicArn : requestMember(ctx, "TargetArn");
+                }
+                default -> requestMember(ctx, "TopicArn");
+            };
+        }
+        return target != null ? target : wildcard;
+    }
+
+    /** The topic of the subscription {@code subscriptionArn} names, the ARN without its last segment. */
+    private static String subscriptionTopic(String subscriptionArn) {
+        if (!AwsArnUtils.isArnFor(subscriptionArn, "sns")) {
+            return null;
+        }
+        int separator = subscriptionArn.lastIndexOf(':');
+        String topicArn = subscriptionArn.substring(0, separator);
+        return AwsArnUtils.isArnFor(topicArn, "sns") && !AwsArnUtils.parse(topicArn).resource().isEmpty() ? topicArn : null;
+    }
+
+    /** A top-level member of a Query or JSON request, trimmed; null when the request does not carry it. */
+    private String requestMember(ContainerRequestContext ctx, String name) {
+        String value = firstFormParam(ctx, name);
+        if (value == null) {
             JsonNode json = readJsonBody(ctx);
-            if (json != null && json.isObject() && json.hasNonNull("TopicArn")) {
-                topicArn = json.get("TopicArn").asText().trim();
+            if (json != null && json.isObject() && json.hasNonNull(name)) {
+                value = json.get(name).asText();
             }
         }
-        return (topicArn != null && !topicArn.isEmpty())
-                ? topicArn
-                : AwsArnUtils.Arn.of("sns", region, accountId, "*").toString();
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     // ── DynamoDB ─────────────────────────────────────────────────────────────────

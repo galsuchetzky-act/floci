@@ -1619,7 +1619,11 @@ public class SnsService implements Resettable, ResourceProvider {
         Topic topic = topicStore.get(key)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException",
                         "Resource does not exist.", 404));
-        if (tags != null) topic.getTags().putAll(tags);
+        if (tags != null) {
+            Map<String, String> updated = new HashMap<>(topic.getTags());
+            updated.putAll(tags);
+            topic.setTags(updated);
+        }
         topicStore.put(key, topic);
     }
 
@@ -1628,7 +1632,11 @@ public class SnsService implements Resettable, ResourceProvider {
         Topic topic = topicStore.get(key)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException",
                         "Resource does not exist.", 404));
-        if (tagKeys != null) tagKeys.forEach(topic.getTags()::remove);
+        if (tagKeys != null) {
+            Map<String, String> updated = new HashMap<>(topic.getTags());
+            tagKeys.forEach(updated::remove);
+            topic.setTags(updated);
+        }
         topicStore.put(key, topic);
     }
 

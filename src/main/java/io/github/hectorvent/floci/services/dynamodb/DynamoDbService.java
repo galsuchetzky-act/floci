@@ -3231,10 +3231,9 @@ public class DynamoDbService {
 
     public void tagResource(String resourceArn, Map<String, String> tags, String region) {
         TableDefinition table = findTableByArn(resourceArn, region);
-        if (table.getTags() == null) {
-            table.setTags(new HashMap<>());
-        }
-        table.getTags().putAll(tags);
+        Map<String, String> updated = table.getTags() == null ? new HashMap<>() : new HashMap<>(table.getTags());
+        updated.putAll(tags);
+        table.setTags(updated);
         String storageKey = regionKey(region, table.getTableName());
         tableStore.put(storageKey, table);
         LOG.debugv("Tagged resource: {0}", resourceArn);
@@ -3243,9 +3242,9 @@ public class DynamoDbService {
     public void untagResource(String resourceArn, List<String> tagKeys, String region) {
         TableDefinition table = findTableByArn(resourceArn, region);
         if (table.getTags() != null) {
-            for (String key : tagKeys) {
-                table.getTags().remove(key);
-            }
+            Map<String, String> updated = new HashMap<>(table.getTags());
+            tagKeys.forEach(updated::remove);
+            table.setTags(updated);
             String storageKey = regionKey(region, table.getTableName());
             tableStore.put(storageKey, table);
         }

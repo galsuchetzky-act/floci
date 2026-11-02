@@ -1516,6 +1516,75 @@ class ResourceArnBuilderTest {
         assertEquals(topicArn, arn);
     }
 
+    @Test
+    void sqsCreateQueueIsCheckedOnTheQueueItNamesNotAQueueUrl() {
+        setJsonBody("{\"QueueName\":\"orders\",\"QueueUrl\":\"http://localhost:4566/000000000000/allowed\"}");
+        assertEquals(List.of("arn:aws:sqs:us-east-1:000000000000:orders"),
+                builder.buildResources("sqs", "sqs:CreateQueue", ctx, "us-east-1", "000000000000", "aws"));
+    }
+
+    @Test
+    void sqsQueueUrlOperationsIgnoreAQueueName() {
+        setJsonBody("{\"QueueName\":\"allowed\",\"QueueUrl\":\"http://localhost:4566/000000000000/orders\"}");
+        assertEquals(List.of("arn:aws:sqs:us-east-1:000000000000:orders"),
+                builder.buildResources("sqs", "sqs:SendMessage", ctx, "us-east-1", "000000000000", "aws"));
+    }
+
+    @Test
+    void sqsMessageMoveTaskIsCheckedOnItsSourceQueue() {
+        setFormBody("Action=StartMessageMoveTask&SourceArn=arn%3Aaws%3Asqs%3Aus-east-1%3A111111111111%3Adlq");
+        assertEquals(List.of("arn:aws:sqs:us-east-1:111111111111:dlq"),
+                builder.buildResources("sqs", "sqs:StartMessageMoveTask", ctx, "us-east-1", "000000000000", "aws"));
+    }
+
+    @Test
+    void sqsQueueUrlAccountIsTheOneTheUrlNames() {
+        setFormBody("Action=SendMessage&QueueUrl=http%3A%2F%2Flocalhost%3A4566%2F111111111111%2Forders");
+        assertEquals(Optional.of("111111111111"), builder.sqsQueueUrlAccount("sqs:SendMessage", ctx));
+        setFormBody("Action=SendMessage&QueueUrl=http%3A%2F%2Flocalhost%3A4566%2F111111111111%2F222222222222%2Forders");
+        assertEquals(Optional.of("222222222222"), builder.sqsQueueUrlAccount("sqs:SendMessage", ctx));
+    }
+
+    @Test
+    void sqsQueueUrlAccountIsEmptyForABareNameOrAnotherTarget() {
+        setFormBody("Action=SendMessage&QueueUrl=123456789012");
+        assertEquals(Optional.empty(), builder.sqsQueueUrlAccount("sqs:SendMessage", ctx));
+        setFormBody("Action=CreateQueue&QueueName=orders&QueueUrl=http%3A%2F%2Flocalhost%3A4566%2F111111111111%2Forders");
+        assertEquals(Optional.empty(), builder.sqsQueueUrlAccount("sqs:CreateQueue", ctx));
+    }
+
+    @Test
+    void snsTaggingIsCheckedOnTheResourceArnNotATopicArn() {
+        setFormBody("Action=TagResource&ResourceArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aalerts"
+                + "&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aallowed");
+        assertEquals(List.of("arn:aws:sns:us-east-1:000000000000:alerts"),
+                builder.buildResources("sns", "sns:TagResource", ctx, "us-east-1", "000000000000", "aws"));
+    }
+
+    @Test
+    void snsSubscriptionOperationsAreCheckedOnTheSubscriptionsTopic() {
+        setFormBody("Action=Unsubscribe&SubscriptionArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aalerts%3A"
+                + "0b5f4c52-2a8c-4b63-9d1e-6f0f6d7c2f11");
+        assertEquals(List.of("arn:aws:sns:us-east-1:000000000000:alerts"),
+                builder.buildResources("sns", "sns:Unsubscribe", ctx, "us-east-1", "000000000000", "aws"));
+    }
+
+    @Test
+    void snsPublishToAPhoneNumberIsCheckedOnNoTopic() {
+        setFormBody("Action=Publish&PhoneNumber=%2B15555550100&Message=hi"
+                + "&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aalerts");
+        assertEquals(List.of("arn:aws:sns:us-east-1:000000000000:*"),
+                builder.buildResources("sns", "sns:Publish", ctx, "us-east-1", "000000000000", "aws"));
+    }
+
+    @Test
+    void snsPublishBatchIsCheckedOnItsTopicWhateverElseItCarries() {
+        setFormBody("Action=PublishBatch&PhoneNumber=%2B15555550100"
+                + "&TopicArn=arn%3Aaws%3Asns%3Aus-east-1%3A000000000000%3Aalerts");
+        assertEquals(List.of("arn:aws:sns:us-east-1:000000000000:alerts"),
+                builder.buildResources("sns", "sns:PublishBatch", ctx, "us-east-1", "000000000000", "aws"));
+    }
+
     // ── S3 ──────────────────────────────────────────────────────────────────────
 
     @Test

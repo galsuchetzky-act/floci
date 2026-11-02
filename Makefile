@@ -80,7 +80,8 @@ PREFIX ?= $(HOME)/.local
         iam-passed-network-connectors-check iam-passed-network-connectors-verify \
         iam-passed-network-connectors-test iam-tag-on-create-sync iam-tag-on-create-check \
         iam-tag-on-create-verify iam-tag-on-create-test iam-request-resources-sync iam-request-resources-check \
-        iam-request-resources-verify iam-request-resources-test iam-data-verify
+        iam-request-resources-verify iam-request-resources-test iam-resource-tag-actions-sync \
+        iam-resource-tag-actions-check iam-resource-tag-actions-verify iam-resource-tag-actions-test iam-data-verify
 
 help: ## List the targets below
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -385,6 +386,7 @@ aws-data-check-botocore: ## The AWS data derived from botocore must match a fres
 	@$(MAKE) --no-print-directory iam-passed-network-connectors-check
 	@$(MAKE) --no-print-directory iam-tag-on-create-check
 	@$(MAKE) --no-print-directory iam-request-resources-check
+	@$(MAKE) --no-print-directory iam-resource-tag-actions-check
 
 eks-addons-sync: ## Regenerate src/main/resources/eks/addon-versions.json from EKS (needs AWS credentials; commit the result)
 	$(PYTHON) tools/aws/regen_eks_addon_versions.py
@@ -478,12 +480,16 @@ LAMBDA_WEB_CONDITION_KEYS_PATHS := src/main/resources/aws/lambda-web-condition-k
 IAM_REQUEST_RESOURCES_PATHS := src/main/resources/aws/iam-request-resources.json \
 	tools/aws/regen_iam_request_resources.py $(IAM_PASSED_ROLES_GENERATOR) \
 	tools/aws/test_regen_iam_request_resources.py
+IAM_RESOURCE_TAG_ACTIONS_PATHS := src/main/resources/aws/iam-resource-tag-actions.json \
+	tools/aws/regen_iam_resource_tag_actions.py tools/aws/regen_iam_tag_on_create.py $(IAM_PASSED_ROLES_GENERATOR) \
+	tools/aws/test_regen_iam_resource_tag_actions.py
 
 iam-data-verify: ## CI gate (online): every vendored IAM file must still match AWS; CHANGED="<paths>" checks only the ones they cover
 	@# Every check runs even when an earlier one fails, so one file's drift cannot hide another's
 	@# state. Sequential steps in CI stop at the first failure, which once left the action
 	@# resource gate unexercised while the namespace list was stale.
 	@namespaces=0; actions=0; authorized=0; passed=0; connectors=0; tagged=0; requested=0; dynamodb=0; conditionkeys=0; s3control=0; lambdaweb=0; \
+	resourcetags=0; \
 	covers() { \
 		[ -z "$(strip $(CHANGED))" ] && return 0; \
 		for path in $(CHANGED); do case " $$1 " in *" $$path "*) return 0;; esac; done; \
@@ -523,9 +529,13 @@ iam-data-verify: ## CI gate (online): every vendored IAM file must still match A
 	if covers "$(LAMBDA_WEB_CONDITION_KEYS_PATHS)" "the Lambda Web condition key table"; then \
 		$(MAKE) --no-print-directory lambda-web-condition-keys-verify || lambdaweb=$$?; \
 	fi; \
+	if covers "$(IAM_RESOURCE_TAG_ACTIONS_PATHS)" "the aws:ResourceTag action table"; then \
+		$(MAKE) --no-print-directory iam-resource-tag-actions-verify || resourcetags=$$?; \
+	fi; \
 	if [ $$namespaces -ne 0 ] || [ $$actions -ne 0 ] || [ $$authorized -ne 0 ] || [ $$passed -ne 0 ] \
 			|| [ $$connectors -ne 0 ] || [ $$tagged -ne 0 ] || [ $$requested -ne 0 ] || [ $$dynamodb -ne 0 ] \
-			|| [ $$conditionkeys -ne 0 ] || [ $$s3control -ne 0 ] || [ $$lambdaweb -ne 0 ]; then \
+			|| [ $$conditionkeys -ne 0 ] || [ $$s3control -ne 0 ] || [ $$lambdaweb -ne 0 ] \
+			|| [ $$resourcetags -ne 0 ]; then \
 		echo ""; \
 		echo "error: vendored IAM data does not match upstream:"; \
 		if [ $$namespaces -ne 0 ]; then \
@@ -553,6 +563,7 @@ iam-data-verify: ## CI gate (online): every vendored IAM file must still match A
 		if [ $$conditionkeys -ne 0 ]; then echo "       the IAM condition key table"; fi; \
 		if [ $$s3control -ne 0 ]; then echo "       the S3 Control tag condition key table"; fi; \
 		if [ $$lambdaweb -ne 0 ]; then echo "       the Lambda Web condition key table"; fi; \
+		if [ $$resourcetags -ne 0 ]; then echo "       the aws:ResourceTag action table"; fi; \
 		exit 1; \
 	fi
 
@@ -695,6 +706,33 @@ iam-request-resources-verify: ## CI gate (online): every vendored operation must
 
 iam-request-resources-test: ## Run the IAM request resource generator's unit tests
 	$(PYTHON) -m pytest tools/aws/test_regen_iam_request_resources.py -q
+
+iam-resource-tag-actions-sync: ## Regenerate src/main/resources/aws/iam-resource-tag-actions.json from AWS (commit the result)
+	$(PYTHON) tools/aws/regen_iam_resource_tag_actions.py
+
+iam-resource-tag-actions-check: ## CI gate (offline): the vendored aws:ResourceTag action table must be well-formed
+	@$(PYTHON) tools/aws/regen_iam_resource_tag_actions.py --check || { \
+		echo ""; \
+		echo "error: src/main/resources/aws/iam-resource-tag-actions.json is malformed."; \
+		echo "       Run 'make iam-resource-tag-actions-sync' and commit the result."; \
+		exit 1; \
+	}
+
+iam-resource-tag-actions-verify: ## CI gate (online): every vendored action must still take aws:ResourceTag upstream
+	@$(PYTHON) tools/aws/regen_iam_resource_tag_actions.py --verify; status=$$?; \
+	if [ $$status -eq 2 ]; then \
+		echo ""; \
+		echo "error: could not reach AWS's service reference, so nothing was verified."; \
+		exit 1; \
+	elif [ $$status -ne 0 ]; then \
+		echo ""; \
+		echo "error: the vendored table gives aws:ResourceTag to an action AWS does not give it to."; \
+		echo "       Run 'make iam-resource-tag-actions-sync' and commit the result."; \
+		exit 1; \
+	fi
+
+iam-resource-tag-actions-test: ## Run the IAM resource tag action generator's unit tests
+	$(PYTHON) -m pytest tools/aws/test_regen_iam_resource_tag_actions.py -q
 
 cfn-property-types-sync: ## Regenerate src/main/resources/aws/cfn-property-types.json from AWS's resource schemas (commit the result)
 	$(PYTHON) tools/aws/regen_cfn_property_types.py

@@ -8,6 +8,7 @@ import io.github.hectorvent.floci.services.dynamodb.model.KeySchemaElement;
 import io.github.hectorvent.floci.services.dynamodb.model.LocalSecondaryIndex;
 import io.github.hectorvent.floci.services.dynamodb.model.TableDefinition;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,6 +44,14 @@ public interface DynamoDbTableAccess {
     void updateTimeToLive(Scope scope, String tableName, String attributeName, boolean enabled);
 
     Map<String, String> listTagsOfResource(Scope scope, String resourceArn);
+
+    /** The tags on the table {@code tableName} names, empty when it has none or does not exist. */
+    default Map<String, String> tableTags(Scope scope, String tableName) {
+        return findTable(scope, tableName)
+                .map(TableDefinition::getTags)
+                .<Map<String, String>>map(LinkedHashMap::new)
+                .orElse(Map.of());
+    }
 
     void tagResource(Scope scope, String resourceArn, Map<String, String> tags);
 

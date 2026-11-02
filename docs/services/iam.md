@@ -2455,6 +2455,26 @@ floci populates:
   `logs:CreateLogStream`, `logs:DeleteLogStream`, `logs:TagResource`, `logs:UntagResource`,
   `logs:ListTagsForResource`, `logs:DeleteLogGroup`, `logs:PutRetentionPolicy` and
   `logs:DeleteRetentionPolicy` use the owning log group's tags.
+  Every other service whose resource tags Floci stores gives the key too: DynamoDB, SNS, KMS,
+  Secrets Manager, IAM (roles, users and customer managed policies), SSM parameters, and each
+  service with a tag handler, SQS, Lambda, EKS and EventBridge Scheduler among them. An action gets it
+  when the Service Reference lists `aws:ResourceTag/${TagKey}` for the action or for a resource type it
+  acts on, from `iam-resource-tag-actions.json`, which `tools/aws/regen_iam_resource_tag_actions.py`
+  generates (`make iam-resource-tag-actions-sync`; `make iam-resource-tag-actions-verify` checks it
+  against AWS). The tags are those of the resource the request is checked against, read from the
+  service that owns it in the resource's account and Region, so a batch or transaction evaluates each
+  DynamoDB table with its own tags, and a DynamoDB index ARN with its table's. A DynamoDB call is
+  evaluated with the tags of the caller's table of that name, the table it runs against, whatever
+  account a table ARN names. An SQS call naming a queue URL reads the tags of the queue in the account
+  the URL names, as the message operations do, while `ListQueueTags` itself keeps returning the
+  caller's queue. Each SNS and SQS operation is checked against the topic or queue its handler acts on:
+  `ResourceArn` for SNS tagging and data protection, the topic of a `SubscriptionArn`, the `Name` of a
+  `CreateTopic`, no topic for a `Publish` to a `PhoneNumber`, and only the `TopicArn` of a
+  `PublishBatch`; the `QueueName` of `CreateQueue` and `GetQueueUrl`, the `SourceArn` of a message move
+  task, and the `QueueUrl` for the rest. A resource that does not exist, or a resource type with no
+  tags such as a DynamoDB stream or a KMS alias, gives no key, so a condition testing one fails; a lookup
+  that fails for another reason fails the request. `sqs:CancelMessageMoveTask`, which names only a task
+  handle, gets no key yet.
 - `s3:ExistingObjectTag/<key>`: the tags already on the target object version, for
   `s3:GetObject`, `s3:GetObjectTagging`, `s3:GetObjectAcl`, `s3:PutObjectAcl`,
   `s3:DeleteObjectTagging`, `s3:PutObjectTagging` and the annotation actions, and for their
