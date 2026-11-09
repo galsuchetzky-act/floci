@@ -698,6 +698,11 @@ public class GlueService {
                 .toList();
     }
 
+    public Page<Map<String, Object>> getTableVersions(String databaseName, String tableName,
+                                                    Integer maxResults, String nextToken) {
+        return paginate(() -> getTableVersions(databaseName, tableName), maxResults, nextToken, 100);
+    }
+
     /** One archived version, or the current table when no VersionId is given, as AWS answers. */
     public Map<String, Object> getTableVersion(String databaseName, String tableName, String versionId) {
         Table current = getTable(databaseName, tableName);

@@ -44,7 +44,7 @@ descriptor keeps the `AdditionalLocations`, `BucketColumns`, `SortColumns`, `Ske
 | UpdateTable | Replaces a table definition; the previous version is archived unless `SkipArchive` is set. |
 | DeleteTable | Deletes a table definition from a database. |
 | BatchDeleteTable | Deletes several tables of a database, reporting the missing ones in `Errors`. |
-| GetTableVersions | Lists the current and archived versions of a table, newest first. |
+| GetTableVersions | Lists the current and archived versions of a table, newest first, with `MaxResults` (1 to 100) and `NextToken` pagination. |
 | GetTableVersion | Returns one version by `VersionId`, or the current version when none is given. |
 | DeleteTableVersion | Deletes an archived version; the current version cannot be deleted, as on AWS. |
 | BatchDeleteTableVersion | Deletes several archived versions, reporting the ones not deleted in `Errors`. |

@@ -155,7 +155,9 @@ public class GlueJsonHandler {
             case "GetTableVersions" -> {
                 String dbName = request.get("DatabaseName").asText();
                 String tableName = request.get("TableName").asText();
-                yield Response.ok(Map.of("TableVersions", glueService.getTableVersions(dbName, tableName))).build();
+                GlueService.Page<Map<String, Object>> page = glueService.getTableVersions(
+                        dbName, tableName, readMaxResults(request), readNextToken(request));
+                yield Response.ok(pageResponse("TableVersions", page.items(), page.nextToken())).build();
             }
             case "GetTableVersion" -> {
                 String dbName = request.get("DatabaseName").asText();
