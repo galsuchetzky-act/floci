@@ -40,7 +40,7 @@ descriptor keeps the `AdditionalLocations`, `BucketColumns`, `SortColumns`, `Ske
 |--------|-------------|
 | CreateTable | Creates a table definition in the local Glue Data Catalog. |
 | GetTable | Returns a stored table definition and resolves schema references when possible. |
-| GetTables | Lists table definitions for a database. |
+| GetTables | Lists table definitions for a database with `MaxResults` (1 to 100) and `NextToken` pagination. |
 | UpdateTable | Replaces a table definition; the previous version is archived unless `SkipArchive` is set. |
 | DeleteTable | Deletes a table definition from a database. |
 | BatchDeleteTable | Deletes several tables of a database, reporting the missing ones in `Errors`. |

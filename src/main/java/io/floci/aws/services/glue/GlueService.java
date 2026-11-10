@@ -466,6 +466,10 @@ public class GlueService {
         return resolved;
     }
 
+    public Page<Table> getTables(String databaseName, Integer maxResults, String nextToken) {
+        return paginate(() -> getTables(databaseName), maxResults, nextToken, 100);
+    }
+
     /**
      * SearchTables over every table of the catalog. SearchText matches a substring of the name,
      * database, description, owner, column names and comments and parameter values, or the whole

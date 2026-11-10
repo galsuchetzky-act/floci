@@ -142,8 +142,10 @@ public class GlueJsonHandler {
             }
             case "GetTables" -> {
                 String dbName = request.get("DatabaseName").asText();
-                List<Table> tables = glueService.getTables(dbName).stream().map(GlueService::withReadDefaults).toList();
-                yield Response.ok(Map.of("TableList", tables)).build();
+                GlueService.Page<Table> page = glueService.getTables(
+                        dbName, readMaxResults(request), readNextToken(request));
+                List<Table> tables = page.items().stream().map(GlueService::withReadDefaults).toList();
+                yield Response.ok(pageResponse("TableList", tables, page.nextToken())).build();
             }
             case "UpdateTable" -> {
                 String dbName = request.get("DatabaseName").asText();
