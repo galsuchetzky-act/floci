@@ -240,10 +240,13 @@ version, as on AWS), and a provision that fails after its own change undoes it b
 propagates. Changing a create-only property creates a replacement and deletes the displaced
 resource once the stack update commits, as on AWS. Deleting the stack deletes the resources.
 
+Runtime endpoint `Tags` are stored on creation. Tag changes and removals update the endpoint
+in place, and a failed stack update restores its previous tags.
+
 Properties the emulated control plane has no model for are accepted and logged once at `WARN`
 rather than failing the stack: the runtime's `CapacityProviderConfiguration`,
 `FilesystemConfigurations`, `LifecycleConfiguration`, `PlatformVersion` and
-`RequestHeaderConfiguration`; the endpoint's `Tags`; and the memory's `MemoryStrategies`,
+`RequestHeaderConfiguration`; and the memory's `MemoryStrategies`,
 `IndexedKeys`, `NamespaceKeys` and `StreamDeliveryResources`.
 
 ## Examples
