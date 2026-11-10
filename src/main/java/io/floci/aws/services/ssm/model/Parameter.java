@@ -32,6 +32,9 @@ public class Parameter {
     @JsonProperty("LastModifiedDate")
     private Instant lastModifiedDate;
 
+    @JsonProperty("LastModifiedUser")
+    private String lastModifiedUser;
+
     @JsonProperty("Description")
     private String description;
 
@@ -97,6 +100,9 @@ public class Parameter {
 
     public long getVersion() { return version; }
     public void setVersion(long version) { this.version = version; }
+
+    public String getLastModifiedUser() { return lastModifiedUser; }
+    public void setLastModifiedUser(String lastModifiedUser) { this.lastModifiedUser = lastModifiedUser; }
 
     public Instant getLastModifiedDate() { return lastModifiedDate; }
     public void setLastModifiedDate(Instant lastModifiedDate) { this.lastModifiedDate = lastModifiedDate; }

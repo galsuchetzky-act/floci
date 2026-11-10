@@ -239,6 +239,10 @@ public class SsmService implements ResourceProvider {
         this.kmsService = kmsService;
     }
 
+    public String accountRootArn() {
+        return regionResolver.buildGlobalArn("iam", "root");
+    }
+
     /**
      * Create or update a parameter.
      * Returns the version number.
@@ -255,6 +259,13 @@ public class SsmService implements ResourceProvider {
     public long putParameter(String name, String value, String type, String description,
                              boolean overwrite, Map<String, String> tags, String keyId, String allowedPattern,
                              String tier, List<JsonNode> policies, String region) {
+        return putParameter(name, value, type, description, overwrite, tags, keyId, allowedPattern,
+                tier, policies, null, region);
+    }
+
+    public long putParameter(String name, String value, String type, String description,
+                             boolean overwrite, Map<String, String> tags, String keyId, String allowedPattern,
+                             String tier, List<JsonNode> policies, String lastModifiedUser, String region) {
         // Validation reads only the request, so it runs before the lock: an AllowedPattern match can take up
         // to ALLOWED_PATTERN_TIMEOUT_NANOS and must not stall other SSM writers.
         if (tier != null && !PARAMETER_TIERS.contains(tier)) {
@@ -309,7 +320,7 @@ public class SsmService implements ResourceProvider {
         // Same monitor as the other synchronized SSM writers: the version read and the write are one step.
         synchronized (this) {
             stored = storeParameter(name, value, type, description, overwrite, tags, keyId, allowedPattern,
-                    tier, policies, region);
+                    tier, policies, lastModifiedUser, region);
         }
         // A new parameter starts at version 1, an overwrite never does.
         eventPublisher.parameterChanged(stored.getVersion() == 1 ? "Create" : "Update", stored, region);
@@ -318,7 +329,7 @@ public class SsmService implements ResourceProvider {
 
     private Parameter storeParameter(String name, String value, String type, String description,
                                 boolean overwrite, Map<String, String> tags, String keyId, String allowedPattern,
-                                String tier, List<JsonNode> policies, String region) {
+                                String tier, List<JsonNode> policies, String lastModifiedUser, String region) {
         String storageKey = regionKey(region, name);
         Parameter existing = parameterStore.get(storageKey).orElse(null);
 
@@ -353,6 +364,7 @@ public class SsmService implements ResourceProvider {
         parameter.setArn(regionResolver.buildArn("ssm", region, parameterResource(name)));
         parameter.setEncryptedValue(encryptedValueOf(parameter, region));
         parameter.setLastModifiedDate(Instant.now());
+        parameter.setLastModifiedUser(lastModifiedUser);
 
         if (existing != null && existing.getTags() != null) {
             parameter.setTags(new HashMap<>(existing.getTags()));
@@ -599,6 +611,7 @@ public class SsmService implements ResourceProvider {
         parameter.setVersion(history.getVersion());
         parameter.setDescription(history.getDescription());
         parameter.setLastModifiedDate(history.getLastModifiedDate());
+        parameter.setLastModifiedUser(history.getLastModifiedUser());
         // Older stored history has no KeyId; only the current version can recover it reliably.
         parameter.setKeyId(history.getKeyId() != null ? history.getKeyId()
                 : history.getVersion() == current.getVersion() ? current.getKeyId() : null);

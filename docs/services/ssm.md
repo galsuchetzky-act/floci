@@ -70,6 +70,12 @@ without a label filter continue to return the latest version of each parameter.
 | `AcknowledgeMessage` | Agent acknowledges receipt of a command message |
 | `SendReply` | Agent reports command output and status |
 
+`PutParameter` requests record the caller ARN in the current metadata and each version's
+`LastModifiedUser`. `DescribeParameters` returns the latest writer; `GetParameterHistory`
+returns the writer saved with each version. Account-root test credentials use the root ARN
+in the request's partition. Legacy records and internal service writes without an identified
+caller leave the optional field unset; reads do not infer it from the reader.
+
 ## Run Command Execution
 
 `SendCommand` supports the `AWS-RunShellScript` document. For EC2 instances launched by Floci in real Docker mode, Floci creates the command invocation, returns the command response, and then runs the script asynchronously inside the target instance container. Callers observe completion through `GetCommandInvocation`. `stdout`, `stderr`, response code, start time, and end time are recorded on the invocation.

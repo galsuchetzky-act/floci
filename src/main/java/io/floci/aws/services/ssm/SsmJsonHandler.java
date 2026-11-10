@@ -12,7 +12,9 @@ import io.floci.aws.core.common.EpochSeconds;
 import io.floci.aws.core.common.IamEnforcementFilter;
 import io.floci.aws.core.common.PaginatedResult;
 import io.floci.aws.core.common.Pagination;
+import io.floci.aws.core.common.RequestContext;
 import io.floci.aws.core.common.SmithyValidationErrors;
+import io.floci.aws.services.iam.IamService;
 import io.floci.aws.services.ssm.model.Command;
 import io.floci.aws.services.ssm.model.CommandInvocation;
 import io.floci.aws.services.ssm.model.InstanceInformation;
@@ -50,14 +52,19 @@ public class SsmJsonHandler {
     private final SsmCommandService commandService;
     private final ObjectMapper objectMapper;
     private final IamEnforcementFilter iamEnforcementFilter;
+    private final IamService iamService;
+    private final RequestContext requestContext;
 
     @Inject
     public SsmJsonHandler(SsmService ssmService, SsmCommandService commandService, ObjectMapper objectMapper,
-                          IamEnforcementFilter iamEnforcementFilter) {
+                          IamEnforcementFilter iamEnforcementFilter, IamService iamService,
+                          RequestContext requestContext) {
         this.ssmService = ssmService;
         this.commandService = commandService;
         this.objectMapper = objectMapper;
         this.iamEnforcementFilter = iamEnforcementFilter;
+        this.iamService = iamService;
+        this.requestContext = requestContext;
     }
 
     public Response handle(String action, JsonNode request, String region, String authorization) {
@@ -123,6 +130,11 @@ public class SsmJsonHandler {
     record PutParameterResponse(@JsonProperty("Version") long version) {
     }
 
+    private String parameterWriterArn() {
+        return iamService.resolveCallerArn(requestContext.getAccessKeyId())
+                .orElseGet(() -> ssmService.accountRootArn());
+    }
+
     private Response handlePutParameter(JsonNode request, String region) {
         String name = request.path("Name").asText();
         String value = request.path("Value").asText();
@@ -157,7 +169,7 @@ public class SsmJsonHandler {
 
         long version = ssmService.putParameter(name, value, type, description, overwrite, tags,
                 optionalText(request, "KeyId"), optionalText(request, "AllowedPattern"),
-                optionalText(request, "Tier"), policies, region);
+                optionalText(request, "Tier"), policies, parameterWriterArn(), region);
 
         return Response.ok(new PutParameterResponse(version)).build();
     }
@@ -318,6 +330,9 @@ public class SsmJsonHandler {
                 node.put("KeyId", h.getKeyId());
             }
             node.put("LastModifiedDate", EpochSeconds.fromInstant(h.getLastModifiedDate()));
+            if (h.getLastModifiedUser() != null) {
+                node.put("LastModifiedUser", h.getLastModifiedUser());
+            }
             if (h.getDescription() != null) {
                 node.put("Description", h.getDescription());
             }
@@ -406,6 +421,9 @@ public class SsmJsonHandler {
             node.put("Type", p.getType());
             node.put("Version", p.getVersion());
             node.put("LastModifiedDate", EpochSeconds.fromInstant(p.getLastModifiedDate()));
+            if (p.getLastModifiedUser() != null) {
+                node.put("LastModifiedUser", p.getLastModifiedUser());
+            }
             if (p.getDescription() != null) {
                 node.put("Description", p.getDescription());
             }

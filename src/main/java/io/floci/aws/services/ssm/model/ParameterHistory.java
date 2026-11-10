@@ -33,6 +33,9 @@ public class ParameterHistory {
     @JsonProperty("LastModifiedDate")
     private Instant lastModifiedDate;
 
+    @JsonProperty("LastModifiedUser")
+    private String lastModifiedUser;
+
     @JsonProperty("Description")
     private String description;
 
@@ -49,6 +52,7 @@ public class ParameterHistory {
         this.type = parameter.getType();
         this.keyId = parameter.getKeyId();
         this.lastModifiedDate = parameter.getLastModifiedDate();
+        this.lastModifiedUser = parameter.getLastModifiedUser();
         this.description = parameter.getDescription();
     }
 
@@ -60,6 +64,7 @@ public class ParameterHistory {
         this.type = other.type;
         this.keyId = other.keyId;
         this.lastModifiedDate = other.lastModifiedDate;
+        this.lastModifiedUser = other.lastModifiedUser;
         this.description = other.description;
         this.labels = other.labels != null ? new ArrayList<>(other.labels) : new ArrayList<>();
     }
@@ -81,6 +86,9 @@ public class ParameterHistory {
 
     public String getKeyId() { return keyId; }
     public void setKeyId(String keyId) { this.keyId = keyId; }
+
+    public String getLastModifiedUser() { return lastModifiedUser; }
+    public void setLastModifiedUser(String lastModifiedUser) { this.lastModifiedUser = lastModifiedUser; }
 
     public Instant getLastModifiedDate() { return lastModifiedDate; }
     public void setLastModifiedDate(Instant lastModifiedDate) { this.lastModifiedDate = lastModifiedDate; }
