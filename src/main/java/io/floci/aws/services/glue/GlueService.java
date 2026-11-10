@@ -953,6 +953,12 @@ public class GlueService {
                 .toList();
     }
 
+    public Page<Partition> getPartitions(String databaseName, String tableName, String expression,
+                                         Segment segment, Integer maxResults, String nextToken) {
+        return paginate(() -> getPartitions(databaseName, tableName, expression, segment),
+                maxResults, nextToken, 1000);
+    }
+
     private static void validateSegment(Segment segment) {
         if (segment == null) {
             return;

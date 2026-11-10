@@ -207,9 +207,10 @@ public class GlueJsonHandler {
                 String tableName = request.get("TableName").asText();
                 String expression = request.path("Expression").asText(null);
                 GlueService.Segment segment = request.hasNonNull("Segment") ? segment(request.get("Segment")) : null;
-                List<Partition> partitions = glueService.getPartitions(dbName, tableName, expression, segment).stream()
-                        .map(GlueService::withReadDefaults).toList();
-                yield Response.ok(Map.of("Partitions", partitions)).build();
+                GlueService.Page<Partition> page = glueService.getPartitions(dbName, tableName, expression, segment,
+                        readMaxResults(request), readNextToken(request));
+                List<Partition> partitions = page.items().stream().map(GlueService::withReadDefaults).toList();
+                yield Response.ok(pageResponse("Partitions", partitions, page.nextToken())).build();
             }
             case "DeletePartition" -> handleDeletePartition(request);
             case "BatchDeletePartition" -> handleBatchDeletePartition(request);
