@@ -190,6 +190,11 @@ block is ever produced even when a request supplies `tools`.
 
 ## Behavior notes
 
+`TagResource` requires a string-to-string `tags` map with at most 50 entries. Keys have
+1 to 128 characters and values 0 to 256, using the AgentCore tag character pattern.
+Missing or malformed maps and invalid entries return `ValidationException` without
+changing stored tags. An empty map is valid; keys omitted from a request stay unchanged.
+
 - `agentRuntimeId` is `<name>-<10 alphanumerics>`; the ARN embeds a UUID and the
   version: `arn:aws:bedrock-agentcore:<region>:<account>:agent/<uuid>:<version>`.
 - `agentRuntimeName` must match `[a-zA-Z][a-zA-Z0-9_]{0,47}` (no hyphens); invalid
