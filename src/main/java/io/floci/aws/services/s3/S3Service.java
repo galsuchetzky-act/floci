@@ -3298,6 +3298,10 @@ public class S3Service implements Resettable, ResourceProvider {
         return resolveBucket(bucketName).map(Bucket::getRegion).orElse(null);
     }
 
+    public String bucketRegionOrDefault(String storedRegion) {
+        return storedRegion == null || storedRegion.isBlank() ? regionResolver.getDefaultRegion() : storedRegion;
+    }
+
     // --- Batch Delete ---
 
     public record DeleteResult(String key, String versionId, boolean deleteMarker, String deleteMarkerVersionId) {
@@ -8518,12 +8522,12 @@ public class S3Service implements Resettable, ResourceProvider {
     public List<ExplorerResource> getResources() {
         List<ExplorerResource> resources = new ArrayList<>();
         for (Bucket bucket : listBuckets()) {
+            String bucketRegion = bucketRegionOrDefault(bucket.getRegion());
             resources.add(new ExplorerResource(
-                    AwsArnUtils.Arn.global(AwsRegions.partitionFor(bucket.getRegion() != null
-                            ? bucket.getRegion() : regionResolver.getDefaultRegion()), "s3", "", bucket.getName()).toString(),
+                    AwsArnUtils.Arn.global(AwsRegions.partitionFor(bucketRegion), "s3", "", bucket.getName()).toString(),
                     "s3:bucket",
                     "s3",
-                    bucket.getRegion() != null ? bucket.getRegion() : regionResolver.getDefaultRegion(),
+                    bucketRegion,
                     regionResolver.getAccountId(),
                     bucket.getCreationDate() != null ? bucket.getCreationDate() : Instant.now(),
                     bucket.getTags() != null ? bucket.getTags() : Map.of()));

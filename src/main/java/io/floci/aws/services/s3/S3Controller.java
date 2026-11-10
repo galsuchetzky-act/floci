@@ -278,8 +278,7 @@ public class S3Controller {
                    .elem("Name", b.getName())
                    .elem("CreationDate", ISO_FORMAT.format(b.getCreationDate()));
                 if (includeRegion) {
-                    String region = b.getRegion();
-                    xml.elem("BucketRegion", region == null || region.isBlank() ? regionResolver.getDefaultRegion() : region);
+                    xml.elem("BucketRegion", s3Service.bucketRegionOrDefault(b.getRegion()));
                 }
                 xml.end("Bucket");
             }
@@ -310,10 +309,7 @@ public class S3Controller {
             }
             s3Service.authorizeBucketRead(bucket, "s3:ListBucket", authorization);
             s3Service.headBucket(bucket);
-            String bucketRegion = s3Service.getBucketRegion(bucket);
-            if (bucketRegion == null || bucketRegion.isBlank()) {
-                bucketRegion = regionResolver.getDefaultRegion();
-            }
+            String bucketRegion = s3Service.bucketRegionOrDefault(s3Service.getBucketRegion(bucket));
             return Response.ok()
                     .header("x-amz-bucket-region", bucketRegion)
                     .build();
@@ -2694,10 +2690,10 @@ public class S3Controller {
     // --- Bucket Location ---
 
     private Response handleGetBucketLocation(String bucket) {
-        String region = s3Service.getBucketRegion(bucket);
+        String region = s3Service.bucketRegionOrDefault(s3Service.getBucketRegion(bucket));
         String xml;
         // Null only for us-east-1, in every partition (GetBucketLocationOutput in the S3 model).
-        if (region == null || US_EAST_1.equals(region)) {
+        if (US_EAST_1.equals(region)) {
             xml = "<LocationConstraint xmlns=\"" + AwsNamespaces.S3 + "\"/>";
         } else {
             xml = new XmlBuilder()
