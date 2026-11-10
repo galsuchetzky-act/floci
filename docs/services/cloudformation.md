@@ -74,6 +74,11 @@ Operation IDs are recorded and validated. Duplicate IDs return `OperationIdAlrea
 
 ## CloudWatch Logs log streams
 
+`AWS::Logs::LogGroup` accepts `LogGroupClass` values `STANDARD`, `INFREQUENT_ACCESS` and
+`DELIVERY`, with `STANDARD` as the default. The class cannot change for an existing log group;
+a class change fails before retention or tags are updated. Retention and tags remain updatable
+when the class is unchanged.
+
 `AWS::Logs::LogStream` creates a stream in the required `LogGroupName`. `LogStreamName` is optional;
 when omitted, including through `Fn::If` returning `AWS::NoValue`, CloudFormation generates a name
 and keeps it across updates. An explicit empty name remains invalid. `Ref` returns the stream name.

@@ -429,7 +429,6 @@ AWS::Logs::LogGroup	DataProtectionPolicy	accepted and ignored
 AWS::Logs::LogGroup	DeletionProtectionEnabled	accepted and ignored
 AWS::Logs::LogGroup	FieldIndexPolicies	accepted and ignored
 AWS::Logs::LogGroup	KmsKeyId	accepted and ignored
-AWS::Logs::LogGroup	LogGroupClass	accepted and ignored
 AWS::Logs::LogGroup	ResourcePolicyDocument	accepted and ignored
 AWS::Organizations::Account	RoleName	accepted and ignored
 AWS::Pipes::Pipe	KmsKeyIdentifier	accepted and ignored

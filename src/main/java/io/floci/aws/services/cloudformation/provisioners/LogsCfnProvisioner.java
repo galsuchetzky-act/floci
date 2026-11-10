@@ -2,6 +2,7 @@ package io.floci.aws.services.cloudformation.provisioners;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import io.floci.aws.core.common.AwsArnUtils;
+import io.floci.aws.core.common.AwsException;
 import io.floci.aws.services.cloudformation.model.StackResource;
 import io.floci.aws.services.cloudwatch.logs.CloudWatchLogsService;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -38,6 +39,7 @@ public class LogsCfnProvisioner implements CfnResourceProvisioner {
 
     @Override
     public void provision(StackResource r, JsonNode props, ProvisionContext ctx) {
+        String logGroupClass = ctx.resolveOptional(props, "LogGroupClass");
         String explicitName = ctx.resolveOptional(props, "LogGroupName");
         boolean hasExplicitName = explicitName != null && !explicitName.isBlank();
         String priorPhysicalId = ctx.priorPhysicalId();
@@ -95,13 +97,18 @@ public class LogsCfnProvisioner implements CfnResourceProvisioner {
         // does not restore a resource this method already deleted.
         if (priorPhysicalId != null && priorPhysicalId.equals(name)
                 && logsService.logGroupExists(name, ctx.region())) {
+            String requestedClass = logGroupClass == null ? "STANDARD" : logGroupClass;
+            if (!requestedClass.equals(logsService.logGroupClass(name, ctx.region()))) {
+                throw new AwsException("ValidationError",
+                        "LogGroupClass updates are not supported for an existing log group.", 400);
+            }
             reconcileLogGroup(name, retentionInDays, tags, ctx.region());
         } else {
             boolean preservedPriorGroup = priorPhysicalId != null
                     && !priorPhysicalId.equals(name)
                     && logsService.logGroupExists(priorPhysicalId, ctx.region());
             try {
-                logsService.createLogGroup(name, retentionInDays, tags, ctx.region());
+                logsService.createLogGroup(name, retentionInDays, tags, false, null, logGroupClass, ctx.region());
             } catch (RuntimeException failure) {
                 if (preservedPriorGroup) {
                     r.getAttributes().put(CfnRollback.UPDATE_ROLLBACK_RESTORED_ATTR, "true");

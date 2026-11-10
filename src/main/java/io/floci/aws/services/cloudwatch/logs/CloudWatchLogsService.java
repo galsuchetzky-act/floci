@@ -371,6 +371,11 @@ public class CloudWatchLogsService implements ResourceProvider, Resettable {
         return groupStore.get(groupKey(region, name)).isPresent();
     }
 
+    public String logGroupClass(String name, String region) {
+        String logGroupClass = requireNamedLogGroup(region, name).getLogGroupClass();
+        return logGroupClass == null ? "STANDARD" : logGroupClass;
+    }
+
     public List<LogGroup> describeLogGroups(String prefix, String region) {
         List<LogGroup> result = matchingLogGroups(prefix, region);
         result.sort(Comparator.comparing(LogGroup::getLogGroupName));

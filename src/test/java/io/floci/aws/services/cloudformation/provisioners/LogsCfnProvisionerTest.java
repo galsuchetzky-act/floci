@@ -46,6 +46,7 @@ class LogsCfnProvisionerTest {
     @BeforeEach
     void setUp() {
         logs = mock(CloudWatchLogsService.class);
+        when(logs.logGroupClass(anyString(), anyString())).thenReturn("STANDARD");
         provisioner = new LogsCfnProvisioner(logs);
         engine = mock(CloudFormationTemplateEngine.class);
         when(engine.resolve(any())).thenAnswer(i -> {
@@ -82,7 +83,7 @@ class LogsCfnProvisionerTest {
                 {"LogGroupName": "/aws/app"}
                 """, null, Map.of());
 
-        verify(logs).createLogGroup(eq("/aws/app"), isNull(), anyMap(), eq(REGION));
+        verify(logs).createLogGroup(eq("/aws/app"), isNull(), anyMap(), eq(false), isNull(), isNull(), eq(REGION));
         assertEquals("/aws/app", r.getPhysicalId(), "Ref is the log group name");
         assertEquals("arn:aws:logs:us-east-1:000000000000:log-group:/aws/app:*",
                 r.getAttributes().get("Arn"));
@@ -106,7 +107,7 @@ class LogsCfnProvisionerTest {
                  "Tags": [{"Key": "env", "Value": "dev"}]}
                 """, null, Map.of());
 
-        verify(logs).createLogGroup(eq("g"), eq(14), tags.capture(), eq(REGION));
+        verify(logs).createLogGroup(eq("g"), eq(14), tags.capture(), eq(false), isNull(), isNull(), eq(REGION));
         assertEquals(Map.of("env", "dev"), tags.getValue());
     }
 
@@ -117,7 +118,7 @@ class LogsCfnProvisionerTest {
                 {"LogGroupName": "g", "RetentionInDays": "forever"}
                 """, null, Map.of());
 
-        verify(logs).createLogGroup(eq("g"), isNull(), anyMap(), eq(REGION));
+        verify(logs).createLogGroup(eq("g"), isNull(), anyMap(), eq(false), isNull(), isNull(), eq(REGION));
     }
 
     @Test
@@ -129,7 +130,7 @@ class LogsCfnProvisionerTest {
                 {"LogGroupName": "g", "RetentionInDays": "7"}
                 """, "g", Map.of("FlociLogGroupNameMode", "explicit"));
 
-        verify(logs, never()).createLogGroup(anyString(), any(), anyMap(), anyString());
+        verify(logs, never()).createLogGroup(anyString(), any(), anyMap(), eq(false), isNull(), isNull(), anyString());
         verify(logs).putRetentionPolicy("g", 7, REGION);
         // A tag dropped from the template is removed from the live group, not just left behind.
         verify(logs).untagLogGroup("g", List.of("stale"), REGION);
@@ -156,7 +157,7 @@ class LogsCfnProvisionerTest {
                 """, "old", Map.of("FlociLogGroupNameMode", "explicit"));
 
         assertEquals("new", r.getPhysicalId());
-        verify(logs).createLogGroup(eq("new"), isNull(), anyMap(), eq(REGION));
+        verify(logs).createLogGroup(eq("new"), isNull(), anyMap(), eq(false), isNull(), isNull(), eq(REGION));
         verify(logs).deleteLogGroup("old", REGION);
     }
 
@@ -168,7 +169,7 @@ class LogsCfnProvisionerTest {
     void aFailedRenameLeavesTheOriginalAndFlagsTheRollback() {
         when(logs.logGroupExists("old", REGION)).thenReturn(true);
         doThrow(new RuntimeException("name taken"))
-                .when(logs).createLogGroup(eq("new"), any(), anyMap(), anyString());
+                .when(logs).createLogGroup(eq("new"), any(), anyMap(), eq(false), isNull(), isNull(), anyString());
 
         StackResource r = new StackResource();
         r.setLogicalId("LogGroup");
@@ -207,7 +208,7 @@ class LogsCfnProvisionerTest {
         StackResource r = provision("{}", generated, Map.of("FlociLogGroupNameMode", "generated"));
 
         assertEquals(generated, r.getPhysicalId());
-        verify(logs, never()).createLogGroup(anyString(), any(), anyMap(), anyString());
+        verify(logs, never()).createLogGroup(anyString(), any(), anyMap(), eq(false), isNull(), isNull(), anyString());
     }
 
     @Test

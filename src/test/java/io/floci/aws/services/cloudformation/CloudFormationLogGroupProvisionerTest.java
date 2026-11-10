@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
@@ -40,6 +41,7 @@ class CloudFormationLogGroupProvisionerTest {
     @BeforeEach
     void setUp() {
         logsService = mock(CloudWatchLogsService.class);
+        when(logsService.logGroupClass(anyString(), anyString())).thenReturn("STANDARD");
         // Naming the service is enough: the fixture wires LogsCfnProvisioner from it, the way CDI
         // does. Testing through the dispatcher rather than the provisioner directly also covers the
         // plumbing that carries existingPhysicalId and existingAttributes into ProvisionContext.
@@ -63,7 +65,7 @@ class CloudFormationLogGroupProvisionerTest {
         assertNotEquals(legacyExplicitName, result.getPhysicalId());
         assertTrue(result.getPhysicalId().startsWith(STACK_NAME + "-LogGroup-"),
                 "expected a freshly generated name, got: " + result.getPhysicalId());
-        verify(logsService).createLogGroup(eq(result.getPhysicalId()), isNull(), anyMap(), eq(REGION));
+        verify(logsService).createLogGroup(eq(result.getPhysicalId()), isNull(), anyMap(), eq(false), isNull(), isNull(), eq(REGION));
         verify(logsService).deleteLogGroup(legacyExplicitName, REGION);
     }
 
@@ -78,7 +80,7 @@ class CloudFormationLogGroupProvisionerTest {
 
         assertEquals("CREATE_COMPLETE", result.getStatus());
         assertEquals(legacyGeneratedName, result.getPhysicalId());
-        verify(logsService, never()).createLogGroup(eq(legacyGeneratedName), isNull(), anyMap(), eq(REGION));
+        verify(logsService, never()).createLogGroup(eq(legacyGeneratedName), isNull(), anyMap(), eq(false), isNull(), isNull(), eq(REGION));
         verify(logsService, never()).deleteLogGroup(legacyGeneratedName, REGION);
         verify(logsService).deleteRetentionPolicy(legacyGeneratedName, REGION);
     }
