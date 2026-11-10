@@ -32,6 +32,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -172,7 +173,8 @@ class BedrockAgentCoreCfnProvisionerTest {
         endpoint.setStatus("READY");
         endpoint.setCreatedAt(Instant.EPOCH);
         endpoint.setLastUpdatedAt(Instant.EPOCH);
-        when(runtimes.createEndpoint(RUNTIME_ID, "prod", null, null, null, REGION)).thenReturn(endpoint);
+        when(runtimes.createEndpoint(eq(RUNTIME_ID), eq("prod"), isNull(), isNull(), anyMap(), isNull(), eq(REGION)))
+                .thenReturn(endpoint);
         when(runtimes.endpointArn(endpoint, REGION)).thenReturn("arn:ep");
         when(runtimes.getAgentRuntime(RUNTIME_ID, REGION))
                 .thenThrow(new AwsException("InternalServerException", "boom", 500));
@@ -283,5 +285,122 @@ class BedrockAgentCoreCfnProvisionerTest {
 
         verify(runtimes).updateEndpoint(RUNTIME_ID, "prod", null, null, true, REGION);
         assertEquals("arn:ep", r.getPhysicalId());
+    }
+
+    private AgentRuntimeEndpoint taggedEndpoint(Map<String, String> tags) {
+        AgentRuntime runtime = runtime(null, Map.of());
+        AgentRuntimeEndpoint endpoint = new AgentRuntimeEndpoint();
+        endpoint.setName("prod");
+        endpoint.setUuid("ep-uuid");
+        endpoint.setTargetVersion("1");
+        endpoint.setLiveVersion("1");
+        endpoint.setStatus("READY");
+        endpoint.setCreatedAt(Instant.EPOCH);
+        endpoint.setLastUpdatedAt(Instant.EPOCH);
+        endpoint.getTags().putAll(tags);
+        when(runtimes.findEndpointByArn(REGION, "arn:ep"))
+                .thenReturn(Optional.of(new BedrockAgentCoreControlService.EndpointLocation(runtime, endpoint)));
+        when(runtimes.getAgentRuntime(RUNTIME_ID, REGION)).thenReturn(runtime);
+        when(runtimes.endpointArn(endpoint, REGION)).thenReturn("arn:ep");
+        when(runtimes.arn(any(), anyString(), eq(REGION))).thenReturn(RUNTIME_ARN);
+        when(runtimes.getEndpointTagsByArn(REGION, "arn:ep"))
+                .thenAnswer(call -> new HashMap<>(endpoint.getTags()));
+        doAnswer(call -> {
+            Map<String, String> added = call.getArgument(2);
+            endpoint.getTags().putAll(added);
+            return null;
+        }).when(runtimes).tagEndpointByArn(eq(REGION), eq("arn:ep"), anyMap());
+        doAnswer(call -> {
+            List<String> removed = call.getArgument(2);
+            removed.forEach(endpoint.getTags()::remove);
+            return null;
+        }).when(runtimes).untagEndpointByArn(eq(REGION), eq("arn:ep"), any());
+        return endpoint;
+    }
+
+    private ObjectNode endpointProps(Map<String, String> tags) {
+        ObjectNode props = mapper.createObjectNode();
+        props.put("AgentRuntimeId", RUNTIME_ID);
+        props.put("Name", "prod");
+        if (tags != null) {
+            props.set("Tags", mapper.valueToTree(tags));
+        }
+        return props;
+    }
+
+    private StackResource endpointResource() {
+        StackResource r = resource("AWS::BedrockAgentCore::RuntimeEndpoint");
+        r.setPhysicalId("arn:ep");
+        return r;
+    }
+
+    @Test
+    void endpointCreatePassesResolvedTagsToTheBackingService() {
+        AgentRuntimeEndpoint endpoint = taggedEndpoint(Map.of());
+        when(runtimes.createEndpoint(RUNTIME_ID, "prod", null, null, null, REGION)).thenReturn(endpoint);
+        when(runtimes.createEndpoint(eq(RUNTIME_ID), eq("prod"), isNull(), isNull(), anyMap(), isNull(), eq(REGION)))
+                .thenReturn(endpoint);
+
+        provisioner.provision(endpointResource(), endpointProps(Map.of("team", "agents")), ctx(null));
+
+        verify(runtimes).createEndpoint(RUNTIME_ID, "prod", null, null, Map.of("team", "agents"), null, REGION);
+    }
+
+    @Test
+    void endpointTagsUpdateWithoutReplacingOrUpdatingConfiguration() {
+        AgentRuntimeEndpoint endpoint = taggedEndpoint(Map.of("old", "value", "team", "before"));
+        StackResource r = endpointResource();
+
+        provisioner.provision(r, endpointProps(Map.of("team", "after")), ctx("arn:ep"));
+
+        assertEquals(Map.of("team", "after"), endpoint.getTags());
+        assertEquals("arn:ep", r.getPhysicalId());
+        verify(runtimes, never()).updateEndpoint(any(), any(), any(), any(), anyBoolean(), any());
+        verify(runtimes, never()).createEndpoint(any(), any(), any(), any(), anyMap(), any(), any());
+    }
+
+    @Test
+    void omittingEndpointTagsRemovesThePreviousTags() {
+        AgentRuntimeEndpoint endpoint = taggedEndpoint(Map.of("team", "agents"));
+
+        provisioner.provision(endpointResource(), endpointProps(null), ctx("arn:ep"));
+
+        assertTrue(endpoint.getTags().isEmpty());
+    }
+
+    @Test
+    void endpointTagRollbackRestoresThePreviousMapWithoutUpdatingConfiguration() {
+        AgentRuntimeEndpoint endpoint = taggedEndpoint(Map.of("old", "value", "team", "before"));
+        StackResource r = endpointResource();
+        provisioner.provision(r, endpointProps(Map.of("team", "after")), ctx("arn:ep"));
+        assertEquals(Map.of("team", "after"), endpoint.getTags());
+
+        assertTrue(provisioner.rollbackUpdate(r));
+
+        assertEquals(Map.of("old", "value", "team", "before"), endpoint.getTags());
+        assertEquals("arn:ep", r.getPhysicalId());
+        verify(runtimes, never()).updateEndpoint(any(), any(), any(), any(), anyBoolean(), any());
+        assertFalse(r.getAttributes().containsKey(BedrockAgentCoreCfnProvisioner.IN_PLACE_PRIOR_ATTR));
+    }
+
+    @Test
+    void aFailedEndpointTagWriteRestoresTheTagsRemovedEarlierInTheUpdate() {
+        AgentRuntimeEndpoint endpoint = taggedEndpoint(Map.of("old", "value"));
+        doAnswer(call -> {
+            Map<String, String> tags = call.getArgument(2);
+            if (tags.containsKey("new")) {
+                throw new AwsException("ValidationException", "rejected", 400);
+            }
+            endpoint.getTags().putAll(tags);
+            return null;
+        }).when(runtimes).tagEndpointByArn(eq(REGION), eq("arn:ep"), anyMap());
+        StackResource r = endpointResource();
+
+        assertThrows(AwsException.class,
+                () -> provisioner.provision(r, endpointProps(Map.of("new", "value")), ctx("arn:ep")));
+
+        assertEquals(Map.of("old", "value"), endpoint.getTags());
+        assertFalse(r.getAttributes().containsKey(BedrockAgentCoreCfnProvisioner.IN_PLACE_PRIOR_ATTR));
+        assertFalse(r.getAttributes().containsKey(CfnRollback.UPDATE_ROLLBACK_FAILURE_ATTR));
     }
 }

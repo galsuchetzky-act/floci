@@ -64,11 +64,10 @@ public class BedrockAgentCoreCfnProvisioner implements CfnResourceProvisioner {
      * Template properties the backing service does not store. The runtime's capacity provider,
      * filesystems, lifecycle, platform version and request-header allowlist, and the memory's
      * strategies, indexed keys, namespace keys and stream delivery have no representation in the
-     * emulated control plane; the endpoint model carries no tags.
+     * emulated control plane.
      */
     private static final Set<String> RUNTIME_NOT_STORED = Set.of("CapacityProviderConfiguration",
             "FilesystemConfigurations", "LifecycleConfiguration", "PlatformVersion", "RequestHeaderConfiguration");
-    private static final Set<String> RUNTIME_ENDPOINT_NOT_STORED = Set.of("Tags");
     private static final Set<String> MEMORY_NOT_STORED = Set.of("IndexedKeys", "MemoryStrategies",
             "NamespaceKeys", "StreamDeliveryResources");
     private static final Set<String> WARNED_NOT_STORED = ConcurrentHashMap.newKeySet();
@@ -236,7 +235,7 @@ public class BedrockAgentCoreCfnProvisioner implements CfnResourceProvisioner {
         String name = required(props, "Name", ctx, RUNTIME_ENDPOINT);
         String version = ctx.resolveOrDefault(props, "AgentRuntimeVersion", null);
         String description = ctx.resolveOrDefault(props, "Description", null);
-        warnNotStored(RUNTIME_ENDPOINT, props, RUNTIME_ENDPOINT_NOT_STORED);
+        Map<String, String> tags = ctx.resolveTags(props, "Tags");
 
         EndpointLocation prior = ctx.isUpdate()
                 ? runtimeService.findEndpointByArn(region, ctx.priorPhysicalId()).orElse(null)
@@ -244,29 +243,45 @@ public class BedrockAgentCoreCfnProvisioner implements CfnResourceProvisioner {
         if (prior != null && runtimeId.equals(prior.runtime().getAgentRuntimeId())
                 && name.equals(prior.endpoint().getName())) {
             AgentRuntimeEndpoint existing = prior.endpoint();
-            // An omitted version leaves the endpoint on the version it serves, as UpdateAgentRuntimeEndpoint does.
-            boolean unchanged = (version == null || version.equals(existing.getTargetVersion()))
-                    && Objects.equals(description, existing.getDescription());
-            if (unchanged) {
-                publishRuntimeEndpoint(r, prior.runtime(), existing, region);
-                return;
+            boolean configurationChanged = !((version == null || version.equals(existing.getTargetVersion()))
+                    && Objects.equals(description, existing.getDescription()));
+            String arn = runtimeService.endpointArn(existing, region);
+            Map<String, String> priorTags = runtimeService.getEndpointTagsByArn(region, arn);
+            if (configurationChanged || !priorTags.equals(tags)) {
+                ObjectNode snapshot = inPlacePrior(runtimeId, region);
+                if (configurationChanged) {
+                    ObjectNode endpointPrior = snapshot.putObject("endpoint");
+                    endpointPrior.put("name", name);
+                    endpointPrior.put("targetVersion", existing.getTargetVersion());
+                    endpointPrior.put("description", existing.getDescription());
+                }
+                snapshot.set("tags", MAPPER.valueToTree(priorTags));
+                writeInPlacePrior(r, snapshot);
             }
-            ObjectNode snapshot = inPlacePrior(runtimeId, region);
-            ObjectNode endpointPrior = snapshot.putObject("endpoint");
-            endpointPrior.put("name", name);
-            endpointPrior.put("targetVersion", existing.getTargetVersion());
-            endpointPrior.put("description", existing.getDescription());
-            writeInPlacePrior(r, snapshot);
-            CfnRollback.guarded(r, ctx, false, () -> { }, () -> undoInPlace(r),
-                    () -> publishRuntimeEndpoint(r, prior.runtime(),
-                            runtimeService.updateEndpoint(runtimeId, name, version, description, true, region), region));
+            CfnRollback.guarded(r, ctx, false, () -> { }, () -> undoInPlace(r), () -> {
+                AgentRuntimeEndpoint endpoint = configurationChanged
+                        ? runtimeService.updateEndpoint(runtimeId, name, version, description, true, region)
+                        : existing;
+                reconcileEndpointTags(arn, tags, region);
+                publishRuntimeEndpoint(r, prior.runtime(), endpoint, region);
+            });
         } else {
             AgentRuntimeEndpoint endpoint = runtimeService.createEndpoint(runtimeId, name, version, description,
-                    null, region);
+                    tags, null, region);
             r.setPhysicalId(runtimeService.endpointArn(endpoint, region));
             CfnRollback.guarded(r, ctx, true, () -> runtimeService.deleteEndpoint(runtimeId, name, null, region),
                     () -> undoInPlace(r),
                     () -> publishRuntimeEndpoint(r, runtimeService.getAgentRuntime(runtimeId, region), endpoint, region));
+        }
+    }
+
+    private void reconcileEndpointTags(String arn, Map<String, String> desired, String region) {
+        List<String> stale = ProvisionContext.staleTagKeys(runtimeService.getEndpointTagsByArn(region, arn), desired);
+        if (!stale.isEmpty()) {
+            runtimeService.untagEndpointByArn(region, arn, stale);
+        }
+        if (!desired.isEmpty()) {
+            runtimeService.tagEndpointByArn(region, arn, desired);
         }
     }
 
@@ -484,9 +499,20 @@ public class BedrockAgentCoreCfnProvisioner implements CfnResourceProvisioner {
                 publishRuntime(resource, runtime, region);
             }
             case RUNTIME_ENDPOINT -> {
-                ObjectNode endpointPrior = (ObjectNode) prior.get("endpoint");
-                AgentRuntimeEndpoint endpoint = runtimeService.updateEndpoint(entityId, text(endpointPrior, "name"),
-                        text(endpointPrior, "targetVersion"), text(endpointPrior, "description"), true, region);
+                AgentRuntimeEndpoint endpoint;
+                if (prior.has("endpoint")) {
+                    ObjectNode endpointPrior = (ObjectNode) prior.get("endpoint");
+                    endpoint = runtimeService.updateEndpoint(entityId, text(endpointPrior, "name"),
+                            text(endpointPrior, "targetVersion"), text(endpointPrior, "description"), true, region);
+                } else {
+                    endpoint = runtimeService.findEndpointByArn(region, resource.getPhysicalId())
+                            .orElseThrow(() -> new AwsException("ResourceNotFoundException",
+                                    "AgentCore runtime endpoint not found: " + resource.getPhysicalId(), 404)).endpoint();
+                }
+                if (prior.has("tags")) {
+                    reconcileEndpointTags(runtimeService.endpointArn(endpoint, region), stringMap(prior.get("tags")),
+                            region);
+                }
                 publishRuntimeEndpoint(resource, runtimeService.getAgentRuntime(entityId, region), endpoint, region);
             }
             case MEMORY -> {

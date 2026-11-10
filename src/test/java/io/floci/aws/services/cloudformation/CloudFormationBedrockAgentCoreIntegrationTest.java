@@ -128,6 +128,14 @@ class CloudFormationBedrockAgentCoreIntegrationTest {
      */
     private static String rollbackTemplate(String memoryDescription, String runtimeDescription,
                                            String endpointDescription, String tagValue, boolean failing) {
+        return rollbackTemplate(memoryDescription, runtimeDescription, endpointDescription, tagValue, tagValue, failing);
+    }
+
+    private static String rollbackTemplate(String memoryDescription, String runtimeDescription,
+                                           String endpointDescription, String tagValue, String endpointTagValue,
+                                           boolean failing) {
+        String endpointTags = endpointTagValue == null ? ""
+                : ",\n\"Tags\": {\"team\": \"" + endpointTagValue + "\"}";
         String failingResource = failing
                 ? """
                 ,
@@ -169,7 +177,7 @@ class CloudFormationBedrockAgentCoreIntegrationTest {
                       "Type": "AWS::BedrockAgentCore::RuntimeEndpoint",
                       "Properties": {
                         "AgentRuntimeId": {"Fn::GetAtt": ["Runtime", "AgentRuntimeId"]},
-                        "Name": "prod"%s
+                        "Name": "prod"%s%s
                       }
                     }%s
                   },
@@ -177,11 +185,12 @@ class CloudFormationBedrockAgentCoreIntegrationTest {
                     "MemoryId": {"Value": {"Fn::GetAtt": ["Memory", "MemoryId"]}},
                     "MemoryArn": {"Value": {"Fn::GetAtt": ["Memory", "MemoryArn"]}},
                     "RuntimeId": {"Value": {"Fn::GetAtt": ["Runtime", "AgentRuntimeId"]}},
-                    "RuntimeArn": {"Value": {"Fn::GetAtt": ["Runtime", "AgentRuntimeArn"]}}
+                    "RuntimeArn": {"Value": {"Fn::GetAtt": ["Runtime", "AgentRuntimeArn"]}},
+                    "EndpointArn": {"Value": {"Fn::GetAtt": ["Endpoint", "AgentRuntimeEndpointArn"]}}
                   }
                 }
                 """.formatted(descriptionProperty(memoryDescription), tagValue, CONTAINER_URI,
-                descriptionProperty(runtimeDescription), tagValue, descriptionProperty(endpointDescription),
+                descriptionProperty(runtimeDescription), tagValue, descriptionProperty(endpointDescription), endpointTags,
                 failingResource);
     }
 
@@ -304,6 +313,9 @@ class CloudFormationBedrockAgentCoreIntegrationTest {
         String runtimeId = outputs.get("RuntimeId");
         String runtimeArn = outputs.get("RuntimeArn");
 
+        String endpointArn = outputs.get("EndpointArn");
+        given().when().get("/tags/" + endpointArn).then().statusCode(200).body("tags.team", equalTo("agents"));
+
         // Every mutable property changes in place, then a sibling fails the update: the runtime
         // is restored as a further version (as an UpdateAgentRuntime rollback is on AWS), and the
         // memory, the endpoint and both tag sets carry what the stack last committed.
@@ -320,6 +332,9 @@ class CloudFormationBedrockAgentCoreIntegrationTest {
         given().when().get("/tags/" + memoryArn).then().statusCode(200).body("tags.team", equalTo("agents"));
         describeEndpoint(runtimeId, "prod").statusCode(200).body("description", equalTo("endpoint one"));
 
+        assertEquals(endpointArn, rolledBack.get("EndpointArn"));
+        given().when().get("/tags/" + endpointArn).then().statusCode(200).body("tags.team", equalTo("agents"));
+
         // Dropping the descriptions from the template clears them: the template is the whole
         // declared configuration, so an omitted property is not left over from the last update.
         cloudFormation(ROLLBACK_STACK, "UpdateStack", rollbackTemplate(null, null, null, "agents", false));
@@ -329,6 +344,18 @@ class CloudFormationBedrockAgentCoreIntegrationTest {
                 .body("$", not(hasKey("description")));
         describeMemory(memoryId).statusCode(200).body("memory", not(hasKey("description")));
         describeEndpoint(runtimeId, "prod").statusCode(200).body("$", not(hasKey("description")));
+
+        cloudFormation(ROLLBACK_STACK, "UpdateStack",
+                rollbackTemplate(null, null, null, "agents", "after", false));
+        Map<String, String> retagged = outputs(ROLLBACK_STACK, "UPDATE_COMPLETE");
+        assertEquals(endpointArn, retagged.get("EndpointArn"));
+        given().when().get("/tags/" + endpointArn).then().statusCode(200).body("tags.team", equalTo("after"));
+        describeRuntime(runtimeId).statusCode(200).body("agentRuntimeVersion", equalTo("4"));
+
+        cloudFormation(ROLLBACK_STACK, "UpdateStack", rollbackTemplate(null, null, null, "agents", null, false));
+        Map<String, String> untagged = outputs(ROLLBACK_STACK, "UPDATE_COMPLETE");
+        assertEquals(endpointArn, untagged.get("EndpointArn"));
+        given().when().get("/tags/" + endpointArn).then().statusCode(200).body("tags", equalTo(Map.of()));
 
         cloudFormation(ROLLBACK_STACK, "DeleteStack", null);
         CfnStackWaits.awaitStackDeleted(ROLLBACK_STACK);
