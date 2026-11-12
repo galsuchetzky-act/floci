@@ -22,6 +22,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -153,15 +154,36 @@ public class SageMakerService {
         if (nameContains != null && !nameContains.isBlank()) {
             models = models.stream().filter(m -> m.modelName.contains(nameContains)).toList();
         }
+        BigDecimal before = modelTimeFilter(request, "CreationTimeBefore");
+        BigDecimal after = modelTimeFilter(request, "CreationTimeAfter");
+        models = models.stream().filter(model -> {
+            BigDecimal created = BigDecimal.valueOf(model.creationTime, 3);
+            return (before == null || created.compareTo(before) < 0)
+                    && (after == null || created.compareTo(after) >= 0);
+        }).toList();
+        String timeFilters = before == null && after == null ? ""
+                : (before == null ? "" : before.stripTrailingZeros().toPlainString()) + "/"
+                        + (after == null ? "" : after.stripTrailingZeros().toPlainString());
         return paginate(models, request, sortBy, sortOrder,
                 new CursorScope("ListModels", region,
-                        nameContains == null || nameContains.isBlank() ? "" : nameContains, ""),
+                        nameContains == null || nameContains.isBlank() ? "" : nameContains, "", timeFilters),
                 m -> modelCursor(m, sortBy, sortOrder),
                 m -> modelAnchor(m, sortBy), comparator, (m, n) -> {
             n.put("ModelName", m.modelName);
             n.put("ModelArn", m.modelArn);
             n.put("CreationTime", EpochSeconds.fromMillis(m.creationTime));
         }, "Models");
+    }
+
+    private static BigDecimal modelTimeFilter(JsonNode request, String field) {
+        JsonNode value = request.get(field);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        if (!value.isNumber() || !Double.isFinite(value.doubleValue())) {
+            throw validation(field + " must be a numeric timestamp.");
+        }
+        return value.decimalValue();
     }
 
     public synchronized ObjectNode createEndpointConfig(JsonNode request, String region) {
@@ -817,7 +839,7 @@ public class SageMakerService {
     }
 
     private static String encodeCursor(SortCursor cursor, CursorScope scope) {
-        if ("Name".equals(cursor.sortBy())) {
+        if ("Name".equals(cursor.sortBy()) && scope.timeFilters().isEmpty()) {
             return cursor.value();
         }
         ObjectNode token = STATIC_MAPPER.createObjectNode();
@@ -828,17 +850,18 @@ public class SageMakerService {
         token.put("sortOrder", cursor.sortOrder());
         token.put("nameContains", scope.nameContains());
         token.put("statusEquals", scope.statusEquals());
+        token.put("timeFilters", scope.timeFilters());
         token.put("value", cursor.value());
         token.put("name", cursor.name());
-        return Base64Url.encode(token.toString());
+        return ("Name".equals(cursor.sortBy()) ? "sm-time:" : "") + Base64Url.encode(token.toString());
     }
 
     private static SortCursor decodeCursor(String token, String sortBy, String sortOrder, CursorScope scope) {
-        if ("Name".equals(sortBy)) {
+        if ("Name".equals(sortBy) && scope.timeFilters().isEmpty() && !token.startsWith("sm-time:")) {
             return new SortCursor(sortBy, sortOrder, token, token);
         }
         try {
-            JsonNode cursor = STATIC_MAPPER.readTree(Base64Url.decode(token));
+            JsonNode cursor = STATIC_MAPPER.readTree(Base64Url.decode(token.startsWith("sm-time:") ? token.substring("sm-time:".length()) : token));
             if (cursor == null || cursor.path("version").asInt() != 1
                     || !scope.operation().equals(cursor.path("operation").asText(null))
                     || !scope.region().equals(cursor.path("region").asText(null))
@@ -846,6 +869,7 @@ public class SageMakerService {
                     || !sortOrder.equals(cursor.path("sortOrder").asText(null))
                     || !scope.nameContains().equals(cursor.path("nameContains").asText(null))
                     || !scope.statusEquals().equals(cursor.path("statusEquals").asText(null))
+                    || !scope.timeFilters().equals(cursor.path("timeFilters").asText(""))
                     || !cursor.path("value").isTextual()
                     || !cursor.path("name").isTextual()
                     || cursor.path("name").asText().isBlank()) {
@@ -860,7 +884,11 @@ public class SageMakerService {
     private record SortCursor(String sortBy, String sortOrder, String value, String name) {
     }
 
-    private record CursorScope(String operation, String region, String nameContains, String statusEquals) {
+    private record CursorScope(String operation, String region, String nameContains, String statusEquals,
+                               String timeFilters) {
+        CursorScope(String operation, String region, String nameContains, String statusEquals) {
+            this(operation, region, nameContains, statusEquals, "");
+        }
     }
 
     private <T> ObjectNode page(List<T> remaining, int max, BiConsumer<T, ObjectNode> render,
