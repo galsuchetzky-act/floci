@@ -16,9 +16,11 @@ import io.floci.aws.core.common.AwsRegionFacts;
 import io.floci.aws.core.common.AwsRegions;
 import io.floci.aws.core.common.CloudFrontEdgeDomain;
 import io.floci.aws.core.common.PaginatedResult;
+import io.floci.aws.core.common.Pagination;
 import io.floci.aws.core.common.RegionResolver;
 import io.floci.aws.core.common.ReservedTags;
 import io.floci.aws.core.common.Resettable;
+import io.floci.aws.core.common.SignedMarkers;
 import io.floci.aws.core.common.SmithyValidationErrors;
 import io.floci.aws.core.resource.ExplorerResource;
 import io.floci.aws.core.resource.ResourceProvider;
@@ -139,6 +141,7 @@ public class ApiGatewayService implements ResourceProvider, Resettable {
     private final StorageBackend<String, Account> accountStore;
     private final AccountAwareStorageBackend<CustomDomain> domainStore;
     private final AccountAwareStorageBackend<BasePathMapping> basePathMappingStore;
+    private final SignedMarkers basePathMappingMarkers = new SignedMarkers();
     /**
      * Guards every change to a custom domain or a base path mapping. The stores hand out live
      * objects, so a patch or a tag write is a read-modify-write; two of them on one domain at the
@@ -2880,6 +2883,19 @@ public class ApiGatewayService implements ResourceProvider, Resettable {
         getDomainName(region, domainName);
         String prefix = region + "::" + domainName + "::";
         return basePathMappingStore.scan(k -> k.startsWith(prefix));
+    }
+
+    public PaginatedResult<BasePathMapping> getBasePathMappingsPage(String region, String domainName,
+                                                                   String limit, String position) {
+        List<Map.Entry<String, BasePathMapping>> mappings =
+                new ArrayList<>(basePathMappingsByStoredPath(region, domainName).entrySet());
+        String scope = JSON.createArrayNode().add(regionResolver.getAccountId()).add(region)
+                .add("GetBasePathMappings").add(domainName).toString();
+        PaginatedResult<Map.Entry<String, BasePathMapping>> page = Pagination.slice(mappings,
+                Map.Entry::getKey, resolvePageSize(Pagination.parseMaxResults(limit, "limit", "BadRequestException")),
+                position, basePathMappingMarkers, scope,
+                ignored -> new AwsException("BadRequestException", "Invalid position parameter", 400));
+        return new PaginatedResult<>(page.items().stream().map(Map.Entry::getValue).toList(), page.nextToken());
     }
 
     public void deleteBasePathMapping(String region, String domainName, String basePath) {

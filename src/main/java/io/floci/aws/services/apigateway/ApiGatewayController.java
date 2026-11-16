@@ -1365,12 +1365,17 @@ public class ApiGatewayController {
 
     @GET
     @Path("/domainnames/{domainName}/basepathmappings")
-    public Response getBasePathMappings(@Context HttpHeaders headers, @PathParam("domainName") String domainName) {
+    public Response getBasePathMappings(@Context HttpHeaders headers, @PathParam("domainName") String domainName,
+                                       @QueryParam("limit") String limit, @QueryParam("position") String position) {
         String region = regionResolver.resolveRegion(headers);
-        List<BasePathMapping> mappings = service.getBasePathMappings(region, domainName);
+        PaginatedResult<BasePathMapping> page = service.getBasePathMappingsPage(
+                region, domainName, limit, position);
         ObjectNode root = objectMapper.createObjectNode();
         ArrayNode items = root.putArray("item");
-        mappings.forEach(m -> items.add(toMappingNode(m)));
+        page.items().forEach(mapping -> items.add(toMappingNode(mapping)));
+        if (page.nextToken() != null) {
+            root.put("position", page.nextToken());
+        }
         return Response.ok(root.toString()).type(MediaType.APPLICATION_JSON).build();
     }
 
