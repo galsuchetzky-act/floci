@@ -655,13 +655,18 @@ public class ApiGatewayController {
 
     @GET
     @Path("/restapis/{apiId}/deployments")
-    public Response getDeployments(@Context HttpHeaders headers,
-                                   @PathParam("apiId") String apiId) {
+    public Response getDeployments(@Context HttpHeaders headers, @PathParam("apiId") String apiId,
+                                   @QueryParam("limit") String limit, @QueryParam("position") String position) {
         String region = regionResolver.resolveRegion(headers);
-        List<io.floci.aws.services.apigateway.model.Deployment> deployments = service.getDeployments(region, apiId);
+        // Deployment clashes with the imported API Gateway v2 model.
+        PaginatedResult<io.floci.aws.services.apigateway.model.Deployment> page =
+                service.getDeploymentsPage(region, apiId, limit, position);
         ObjectNode root = objectMapper.createObjectNode();
         ArrayNode items = root.putArray("item");
-        deployments.forEach(d -> items.add(toDeploymentNode(d)));
+        page.items().forEach(deployment -> items.add(toDeploymentNode(deployment)));
+        if (page.nextToken() != null) {
+            root.put("position", page.nextToken());
+        }
         return Response.ok(root.toString()).type(MediaType.APPLICATION_JSON).build();
     }
 

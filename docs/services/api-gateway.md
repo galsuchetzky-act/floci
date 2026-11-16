@@ -159,6 +159,13 @@ Tagged REST APIs, stages, API keys, usage plans and custom domain names are disc
 [Resource Groups Tagging API](resource-groups-tagging.md), whose `TagResources` and `UntagResources`
 write REST API, stage, API key, usage plan and custom domain name tags through to API Gateway.
 
+### Deployment Pagination
+
+`GetDeployments` accepts `limit` and `position`, returns 25 deployments by default,
+and caps pages at 500. Use the returned `position` to continue a partial collection;
+the final page omits it. Positions belong to the caller's account, Region and REST
+API. A missing parent API returns `NotFoundException`.
+
 ### API Key Behaviour Notes
 
 #### `CreateApiKey` and `ImportApiKeys` share one route

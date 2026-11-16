@@ -16,9 +16,11 @@ import io.floci.aws.core.common.AwsRegionFacts;
 import io.floci.aws.core.common.AwsRegions;
 import io.floci.aws.core.common.CloudFrontEdgeDomain;
 import io.floci.aws.core.common.PaginatedResult;
+import io.floci.aws.core.common.Pagination;
 import io.floci.aws.core.common.RegionResolver;
 import io.floci.aws.core.common.ReservedTags;
 import io.floci.aws.core.common.Resettable;
+import io.floci.aws.core.common.SignedMarkers;
 import io.floci.aws.core.common.SmithyValidationErrors;
 import io.floci.aws.core.resource.ExplorerResource;
 import io.floci.aws.core.resource.ResourceProvider;
@@ -125,6 +127,7 @@ public class ApiGatewayService implements ResourceProvider, Resettable {
     private final AccountAwareStorageBackend<RestApi> apiStore;
     private final StorageBackend<String, ApiGatewayResource> resourceStore;
     private final StorageBackend<String, Deployment> deploymentStore;
+    private final SignedMarkers deploymentMarkers = new SignedMarkers();
     private final StorageBackend<String, Map<String, String>> deploymentModelStore;
     private final StorageBackend<String, Stage> stageStore;
     private final StorageBackend<String, Authorizer> authorizerStore;
@@ -935,6 +938,16 @@ public class ApiGatewayService implements ResourceProvider, Resettable {
         getRestApi(region, apiId);
         String prefix = region + "::" + apiId + "::";
         return deploymentStore.scan(k -> k.startsWith(prefix));
+    }
+
+    public PaginatedResult<Deployment> getDeploymentsPage(String region, String apiId,
+                                                        String limit, String position) {
+        List<Deployment> deployments = getDeployments(region, apiId);
+        int pageSize = resolvePageSize(Pagination.parseMaxResults(limit, "limit", "BadRequestException"));
+        String scope = JSON.createArrayNode().add(regionResolver.getAccountId()).add(region)
+                .add("GetDeployments").add(apiId).toString();
+        return Pagination.slice(deployments, Deployment::id, pageSize, position, deploymentMarkers, scope,
+                ignored -> new AwsException("BadRequestException", "Invalid position parameter", 400));
     }
 
     public Deployment getDeployment(String region, String apiId, String deploymentId) {
